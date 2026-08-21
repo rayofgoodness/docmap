@@ -34,6 +34,35 @@ const BINARY_EXTENSIONS = new Set([
 // which is what small/simple projects (and this adapter's own fixtures) expect.
 const SUBMODULE_SPLIT_THRESHOLD = 3;
 
+// Directory-shape alone can't tell "one subdir per business feature" (Nest: src/availability,
+// src/customers, ...) apart from "one subdir per architectural layer" (classic Laravel/Rails/Spring
+// MVC: app/Controllers, app/Models, app/Policies, ...) — splitting the second kind by subdirectory
+// scatters a single feature's Controller/Model/Policy across unrelated "modules", which is worse than
+// not splitting at all. This is a name-based signal to tell them apart: technical-role nouns that
+// name *what kind of thing* lives in a folder, not *what business concept* it's about.
+const TYPE_BUCKET_NAMES = new Set([
+  'controllers', 'controller', 'models', 'model', 'views', 'view', 'viewmodels', 'viewmodel',
+  'services', 'service', 'repositories', 'repository', 'providers', 'provider',
+  'middleware', 'middlewares', 'policies', 'policy', 'requests', 'request',
+  'resources', 'resource', 'jobs', 'job', 'listeners', 'listener', 'events', 'event',
+  'observers', 'observer', 'notifications', 'notification', 'mail', 'rules', 'rule',
+  'casts', 'cast', 'console', 'exceptions', 'exception', 'traits', 'concerns',
+  'contracts', 'contract', 'interfaces', 'interface', 'http',
+  'dto', 'dtos', 'entities', 'entity', 'schemas', 'schema', 'serializers', 'serializer',
+  'validators', 'validator', 'migrations', 'migration', 'seeders', 'seeder', 'factories', 'factory',
+  'guards', 'guard', 'interceptors', 'interceptor', 'decorators', 'decorator',
+  'filters', 'filter', 'pipes', 'pipe', 'strategies', 'strategy',
+  'utils', 'util', 'helpers', 'helper', 'config', 'configs', 'constants', 'types', 'type',
+  'templates', 'template', 'routes', 'route', 'hooks',
+]);
+
+// A directory reads as "grouped by architectural layer" once at least half its immediate
+// subdirectories are named after a technical role rather than a business concept.
+function isTypeGroupedContainer(subDirNames: string[]): boolean {
+  const matches = subDirNames.filter((name) => TYPE_BUCKET_NAMES.has(name.toLowerCase())).length;
+  return matches / subDirNames.length >= 0.5;
+}
+
 function isDocumentable(relPath: string): boolean {
   return !BINARY_EXTENSIONS.has(path.extname(relPath).toLowerCase());
 }
@@ -112,7 +141,7 @@ export const genericAdapter: FrameworkAdapter = {
       const rootPath = path.join(projectRoot, dir);
       const subDirNames = await listImmediateSubdirs(rootPath, config.exclude);
 
-      if (subDirNames.length < SUBMODULE_SPLIT_THRESHOLD) {
+      if (subDirNames.length < SUBMODULE_SPLIT_THRESHOLD || isTypeGroupedContainer(subDirNames)) {
         const files = await listFiles(rootPath, config.exclude, config.include);
         const module = buildModule(slugify(dir), dir, rootPath, dir, files);
         if (module) modules.push(module);

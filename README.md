@@ -181,20 +181,20 @@ in CI or for previewing the module tree.
 
 `docmap.config.json` (or `.docmaprc[.json]`, resolved via cosmiconfig):
 
-| Key | Default | Notes |
-|---|---|---|
-| `framework` | `"auto"` | `magento2` \| `nuxt4` \| `generic` \| `auto` |
-| `language` | `"en"` | Language code written into generated prose |
-| `runner` | `"claude"` | `claude` \| `codex` \| `gemini` \| `mock` |
-| `model` | — | Passed through to the runner CLI, if set |
-| `concurrency` | `2` | Parallel agent calls (max 8) |
+| Key | Default                                              | Notes |
+|---|------------------------------------------------------|---|
+| `framework` | `"auto"`                                             | `magento2` \| `nuxt4` \| `generic` \| `auto` |
+| `language` | `"en"/"ua"`                                         | Language code written into generated prose |
+| `runner` | `"claude"`                                           | `claude` \| `codex` \| `gemini` \| `mock` |
+| `model` | —                                                    | Passed through to the runner CLI, if set |
+| `concurrency` | `2`                                                  | Parallel agent calls (max 8) |
 | `include` / `exclude` | — / node_modules, vendor, .git, dist, build, .docmap | Glob-style path filters, matched per scanned subtree |
-| `scanDir` | — | Same as `--dir`: restrict discovery to one subdirectory |
-| `maxFilesPerPrompt` | `20` | Source files included per module prompt |
-| `maxFileExcerptBytes` | `4000` | Per-file excerpt cap |
-| `maxRetries` | `1` | Retries when the agent's output is missing the required markers |
-| `timeoutMs` | `120000` | Per-agent-call timeout |
-| `elementDocThreshold` | `1` | Modules with this many elements or fewer get their docs folded into the module README instead of separate files |
+| `scanDir` | —                                                    | Same as `--dir`: restrict discovery to one subdirectory |
+| `maxFilesPerPrompt` | `20`                                                 | Source files included per module prompt |
+| `maxFileExcerptBytes` | `4000`                                               | Per-file excerpt cap |
+| `maxRetries` | `1`                                                  | Retries when the agent's output is missing the required markers |
+| `timeoutMs` | `120000`                                             | Per-agent-call timeout |
+| `elementDocThreshold` | `1`                                                  | Modules with this many elements or fewer get their docs folded into the module README instead of separate files |
 
 ## Using it from an agent
 
