@@ -3,8 +3,9 @@ import { genericAdapter } from './generic/index.js';
 import { nuxt4Adapter } from './nuxt4/index.js';
 import { magento2Adapter } from './magento2/index.js';
 import { nestjsAdapter } from './nestjs/index.js';
+import { vue3Adapter } from './vue3/index.js';
 
-const ADAPTERS: FrameworkAdapter[] = [magento2Adapter, nuxt4Adapter, nestjsAdapter, genericAdapter];
+const ADAPTERS: FrameworkAdapter[] = [magento2Adapter, nuxt4Adapter, nestjsAdapter, vue3Adapter, genericAdapter];
 
 export function getAdapterByName(name: string): FrameworkAdapter | undefined {
   return ADAPTERS.find((a) => a.name === name);

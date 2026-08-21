@@ -1,0 +1,59 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import { vue3Adapter } from '../../src/adapters/vue3/index.js';
+import { discoverProject } from '../../src/core/discovery.js';
+import { getDefaultConfig } from '../../src/config/defaults.js';
+import { createLogger } from '../../src/utils/logger.js';
+import type { DiscoveryContext } from '../../src/adapters/types.js';
+
+const FIXTURE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../fixtures/vue3-fake');
+const GENERIC_FIXTURE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../fixtures/generic-fake');
+
+function makeContext(projectRoot = FIXTURE_ROOT): DiscoveryContext {
+  return { projectRoot, config: getDefaultConfig(), logger: createLogger() };
+}
+
+describe('vue3Adapter', () => {
+  it('detects via a non-2.x "vue" dependency in package.json', async () => {
+    await expect(vue3Adapter.detect(makeContext())).resolves.toBe(true);
+  });
+
+  it('does not detect a plain project with no vue dependency', async () => {
+    await expect(vue3Adapter.detect(makeContext(GENERIC_FIXTURE_ROOT))).resolves.toBe(false);
+  });
+
+  it('discovers one module per category, by whichever dirName exists', async () => {
+    const modules = await vue3Adapter.discoverModules(makeContext());
+    const names = modules.map((m) => m.id).sort();
+    expect(names).toEqual(['components', 'composables', 'router', 'stores', 'views']);
+  });
+
+  it('classifies elements by category', async () => {
+    const modules = await vue3Adapter.discoverModules(makeContext());
+    const views = modules.find((m) => m.id === 'views')!;
+    expect(views.elements.every((e) => e.kind === 'page')).toBe(true);
+  });
+
+  it('resolves a component import as a heuristic relation', async () => {
+    const { modules } = await discoverProject(makeContext());
+    const views = modules.find((m) => m.id === 'views')!;
+    const importRelation = views.relations.find((r) => r.type === 'import');
+    expect(importRelation).toMatchObject({ toModule: 'components', confidence: 'heuristic' });
+  });
+
+  it('resolves useXStore() usage to the defining store', async () => {
+    const { modules } = await discoverProject(makeContext());
+    const components = modules.find((m) => m.id === 'components')!;
+    const storeRelation = components.relations.find((r) => r.toModule === 'stores' && r.type === 'unknown');
+    expect(storeRelation).toMatchObject({ detail: 'useCartStore()', confidence: 'heuristic' });
+  });
+
+  it('resolves both static and dynamic-import route components to their view', async () => {
+    const { modules } = await discoverProject(makeContext());
+    const router = modules.find((m) => m.id === 'router')!;
+    const routeRelations = router.relations.filter((r) => r.type === 'route');
+    expect(routeRelations).toHaveLength(2);
+    expect(routeRelations.every((r) => r.toModule === 'views')).toBe(true);
+  });
+});

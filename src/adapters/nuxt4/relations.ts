@@ -2,17 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ModuleDescriptor, RelationDescriptor } from '../types.js';
 import { extractImportTargets } from '../generic/heuristics.js';
-
-function resolveAliasedImport(target: string, fileAbsDir: string, appRoot: string, projectRoot: string): string | null {
-  if (target.startsWith('.')) return path.resolve(fileAbsDir, target);
-  if (target.startsWith('~~/') || target.startsWith('@@/')) return path.resolve(projectRoot, target.slice(3));
-  if (target.startsWith('~/') || target.startsWith('@/')) return path.resolve(appRoot, target.slice(2));
-  return null; // bare specifier (npm package or auto-import) — not deterministically resolvable
-}
-
-function findOwningModule(modules: ModuleDescriptor[], resolvedAbsPath: string): ModuleDescriptor | undefined {
-  return modules.find((m) => resolvedAbsPath === m.rootPath || resolvedAbsPath.startsWith(m.rootPath + path.sep));
-}
+import { findOwningModule, resolveAliasedImport } from '../../utils/moduleImportResolution.js';
 
 const FETCH_CALL_PATTERN = /\b(?:\$fetch|useFetch|useLazyFetch)\(\s*['"]([^'"]+)['"]/g;
 const STORE_CALL_PATTERN = /\buse([A-Za-z0-9]+)Store\(/g;
