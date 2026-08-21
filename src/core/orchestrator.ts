@@ -23,7 +23,7 @@ import {
   writeModuleDoc,
 } from './docWriter.js';
 import type { ElementFrontmatter, ModuleFrontmatter } from '../docFormat/frontmatter.js';
-import type { AgentRunner } from '../runners/types.js';
+import type { AgentRunner, RunnerResult } from '../runners/types.js';
 
 export type ModuleOutcome = 'generated' | 'skipped-up-to-date' | 'dry-run' | 'error';
 
@@ -105,6 +105,23 @@ export async function runGenerate(options: GenerateOptions): Promise<GenerateSum
   return { frameworkName, reports };
 }
 
+export interface BatchOutcome {
+  parsed: ParsedAgentOutput;
+  lastResult: RunnerResult;
+}
+
+/** Turns a failed runner call into a one-line, actionable reason instead of a bare "no content" warning. */
+export function describeBatchFailure(result: RunnerResult, timeoutMs: number): string {
+  if (!result.ok) {
+    const nearTimeout = result.durationMs >= timeoutMs * 0.95;
+    const cause = nearTimeout
+      ? `likely timed out (ran ${Math.round(result.durationMs / 1000)}s against a ${Math.round(timeoutMs / 1000)}s limit)`
+      : `runner exited ${result.exitCode ?? 'with no code'}${result.error ? `: ${result.error}` : ''}`;
+    return cause;
+  }
+  return 'agent responded but without the required marker block(s)';
+}
+
 async function runBatch(args: {
   module: ModuleDescriptor;
   batch: PromptBatch;
@@ -112,17 +129,24 @@ async function runBatch(args: {
   config: ResolvedDocmapConfig;
   runner: AgentRunner;
   instructions?: string;
-}): Promise<ParsedAgentOutput> {
+}): Promise<BatchOutcome> {
   const { module, batch, projectRoot, config, runner, instructions } = args;
   const prompt = await buildModulePrompt(module, config, batch, instructions);
   const elementIds = batch.elements.map((e) => e.id);
 
-  const call = (p: string) =>
-    runner
-      .run({ prompt: p, cwd: projectRoot, moduleId: module.id, elementIds, timeoutMs: config.timeoutMs, model: config.model })
-      .then((r) => parseAgentOutput(r.text));
+  const call = async (p: string) => {
+    const result = await runner.run({
+      prompt: p,
+      cwd: projectRoot,
+      moduleId: module.id,
+      elementIds,
+      timeoutMs: config.timeoutMs,
+      model: config.model,
+    });
+    return { result, parsed: parseAgentOutput(result.text) };
+  };
 
-  let parsed = await call(prompt);
+  let { result, parsed } = await call(prompt);
 
   const failed = (p: ParsedAgentOutput) =>
     (batch.includeBody && p.body === null) || (batch.elements.length > 0 && Object.keys(p.elements).length === 0);
@@ -131,10 +155,10 @@ async function runBatch(args: {
   while (failed(parsed) && attempts < config.maxRetries) {
     attempts += 1;
     const stricterPrompt = `${prompt}\n\nIMPORTANT: your previous response did not include the required marker block(s). Respond again, following the output contract exactly.`;
-    parsed = await call(stricterPrompt);
+    ({ result, parsed } = await call(stricterPrompt));
   }
 
-  return parsed;
+  return { parsed, lastResult: result };
 }
 
 async function processModule(args: {
@@ -178,21 +202,27 @@ async function processModule(args: {
   let moduleBody: string | null = null;
   const mergedElements: Record<string, string> = {};
 
+  let bodyFailureReason: string | null = null;
+
   for (const batch of batches) {
-    const parsed = await runBatch({ module, batch, projectRoot, config, runner, instructions });
-    if (batch.includeBody) moduleBody = parsed.body;
+    const { parsed, lastResult } = await runBatch({ module, batch, projectRoot, config, runner, instructions });
+    if (batch.includeBody) {
+      moduleBody = parsed.body;
+      if (parsed.body === null) bodyFailureReason = describeBatchFailure(lastResult, config.timeoutMs);
+    }
     Object.assign(mergedElements, parsed.elements);
 
     if (batches.length > 1 && batch.elements.length > 0 && Object.keys(parsed.elements).length === 0) {
       logger.warn(
-        `[warn] ${module.id} — batch ${batch.batchIndex + 1}/${batch.totalBatches} returned no element content, those elements will get placeholder docs`,
+        `[warn] ${module.id} — batch ${batch.batchIndex + 1}/${batch.totalBatches} returned no element content ` +
+          `(${describeBatchFailure(lastResult, config.timeoutMs)}), those elements will get placeholder docs`,
       );
     }
   }
 
   if (moduleBody === null) {
-    logger.warn(`[error] ${module.id} — agent did not return a valid body block`);
-    return { moduleId: module.id, outcome: 'error', detail: 'missing body marker' };
+    logger.warn(`[error] ${module.id} — agent did not return a valid body block (${bodyFailureReason ?? 'unknown reason'})`);
+    return { moduleId: module.id, outcome: 'error', detail: bodyFailureReason ?? 'missing body marker' };
   }
 
   await writeModule({
