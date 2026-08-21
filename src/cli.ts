@@ -49,6 +49,7 @@ program
   .option('--model <model>', 'model override passed to the runner')
   .option('--framework <framework>', 'force a framework adapter')
   .option('--dir <path>', 'restrict scanning to a subdirectory of the project')
+  .option('--skill <path>', 'markdown/SKILL.md file with project-specific documentation instructions')
   .action(async (opts) => {
     await generateCommand({
       projectRoot: process.cwd(),
@@ -62,6 +63,7 @@ program
       model: opts.model,
       framework: opts.framework,
       dir: opts.dir,
+      skill: opts.skill,
     });
   });
 

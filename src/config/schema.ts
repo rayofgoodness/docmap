@@ -4,6 +4,7 @@ export const DocmapConfigSchema = z.object({
   framework: z.enum(['magento2', 'nuxt4', 'nestjs', 'vue3', 'generic', 'auto']).default('auto'),
   language: z.string().default('en'),
   scanDir: z.string().optional(),
+  skill: z.string().optional(),
   runner: z.enum(['claude', 'codex', 'gemini', 'mock']).default('claude'),
   model: z.string().optional(),
   concurrency: z.number().int().min(1).max(8).default(2),

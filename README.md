@@ -116,31 +116,45 @@ under `.docmap/`. A module is skipped if its content fingerprint already
 matches the doc on disk from a previous run, so re-running after a small
 change only regenerates what actually changed.
 
+A module with more elements than `maxFilesPerPrompt` is automatically
+split into several agent calls (batches of `maxFilesPerPrompt`) instead
+of one — every element ends up documented from its actual source, rather
+than the agent being asked to write hundreds of blocks for files it was
+never shown. Only the first batch writes the module overview; later
+batches only write per-element blocks. The module-level relationship
+summary sent in every prompt is deduplicated (distinct `type` + target
+pairs, capped at 40 lines) — a module where 200 files all call the same
+`useCartStore()` produces one summary line, not 200.
+
 | Flag | Effect |
 |---|---|
 | `--module <id>` | Only generate this module (repeatable — pass it multiple times for several) |
 | `--runner <name>` | `claude` \| `codex` \| `gemini` \| `mock` — which agent CLI to shell out to |
 | `--lang <lang>` | Override `config.language` for this run |
 | `--force` | Ignore the fingerprint cache, regenerate every targeted module |
-| `--dry-run` | Build the prompts and write them to `.docmap/.cache/prompts/<module>.txt` with a rough token estimate — no agent is called, nothing under `.docmap/` (besides the cache) is touched |
+| `--dry-run` | Build the prompts and write them to `.docmap/.cache/prompts/<module>.txt` (or `<module>.batch<N>.txt` for a split module) with a rough token estimate — no agent is called, nothing under `.docmap/` (besides the cache) is touched |
 | `--concurrency <n>` | Max parallel agent calls (default 2, capped at 8) |
 | `--fail-fast` | Stop after the first module that errors, instead of continuing through the rest |
 | `--model <model>` | Passed straight through to the runner CLI (e.g. `claude --model <model>`) |
 | `--framework <name>` | Override auto-detection |
 | `--dir <path>` | Restrict discovery to one subdirectory — see [Quick start](#quick-start) |
+| `--skill <path>` | A markdown file (a Claude Code `SKILL.md` works as-is — YAML frontmatter is stripped) whose content is folded into every prompt as project-specific documentation instructions: house style, tone, what to emphasize, conventions discovery can't infer on its own |
 
 ```bash
 docmap generate --runner claude                       # generate/refresh everything
 docmap generate --runner claude --module checkout      # just one module
 docmap generate --runner mock                          # zero-cost structural preview
 docmap generate --dry-run                               # see the prompts without spending anything
+docmap generate --runner claude --skill docs-style.md   # follow custom house-style instructions
 ```
 
 A module ends up with `status: error` in its report (not written to
-disk) if the agent's response doesn't include the required output
-markers even after one retry with a stricter prompt (`config.maxRetries`)
+disk) only if its *first* batch's response is missing the module-overview
+block, even after one retry with a stricter prompt (`config.maxRetries`)
 — the run continues past it rather than aborting, unless `--fail-fast` is
-set.
+set. A later batch that comes back empty doesn't fail the module: its
+elements get a placeholder doc and a warning is logged, but everything
+else that did generate is still written.
 
 ### `docmap status`
 
@@ -199,6 +213,7 @@ in CI or for previewing the module tree.
 | `concurrency` | `2`                                                  | Parallel agent calls (max 8) |
 | `include` / `exclude` | — / node_modules, vendor, .git, dist, build, .docmap | Glob-style path filters, matched per scanned subtree |
 | `scanDir` | —                                                    | Same as `--dir`: restrict discovery to one subdirectory |
+| `skill` | —                                                    | Same as `--skill`: path to project-specific documentation instructions |
 | `maxFilesPerPrompt` | `20`                                                 | Source files included per module prompt |
 | `maxFileExcerptBytes` | `4000`                                               | Per-file excerpt cap |
 | `maxRetries` | `1`                                                  | Retries when the agent's output is missing the required markers |

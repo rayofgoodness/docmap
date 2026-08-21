@@ -5,10 +5,11 @@ import type { ResolvedDocmapConfig } from '../config/schema.js';
 import type { RunnerName } from '../types.js';
 import type { Logger } from '../utils/logger.js';
 import { getSectionLabels } from '../utils/lang.js';
+import { loadSkillInstructions } from '../utils/skillInstructions.js';
 import { discoverProject } from './discovery.js';
 import { computeModuleFingerprint } from './fingerprint.js';
-import { buildModulePrompt } from './promptBuilder.js';
-import { parseAgentOutput } from './markers.js';
+import { buildModulePrompt, splitIntoBatches, type PromptBatch } from './promptBuilder.js';
+import { parseAgentOutput, type ParsedAgentOutput } from './markers.js';
 import { createConcurrencyLimiter } from './concurrency.js';
 import { getRunner } from '../runners/registry.js';
 import { buildModulePlaceholderBody } from '../docFormat/templates/moduleRoot.js';
@@ -22,6 +23,7 @@ import {
   writeModuleDoc,
 } from './docWriter.js';
 import type { ElementFrontmatter, ModuleFrontmatter } from '../docFormat/frontmatter.js';
+import type { AgentRunner } from '../runners/types.js';
 
 export type ModuleOutcome = 'generated' | 'skipped-up-to-date' | 'dry-run' | 'error';
 
@@ -64,6 +66,8 @@ export async function runGenerate(options: GenerateOptions): Promise<GenerateSum
     }
   }
 
+  const instructions = config.skill ? await loadSkillInstructions(projectRoot, config.skill, logger) : undefined;
+
   const limit = createConcurrencyLimiter(config.concurrency);
   const reports: ModuleReport[] = [];
   let aborted = false;
@@ -73,7 +77,17 @@ export async function runGenerate(options: GenerateOptions): Promise<GenerateSum
       limit(async () => {
         if (aborted) return;
         try {
-          const report = await processModule({ module, projectRoot, config, logger, runner, runnerName, force, dryRun });
+          const report = await processModule({
+            module,
+            projectRoot,
+            config,
+            logger,
+            runner,
+            runnerName,
+            force,
+            dryRun,
+            instructions,
+          });
           reports.push(report);
           if (report.outcome === 'error' && failFast) aborted = true;
         } catch (err) {
@@ -91,17 +105,50 @@ export async function runGenerate(options: GenerateOptions): Promise<GenerateSum
   return { frameworkName, reports };
 }
 
+async function runBatch(args: {
+  module: ModuleDescriptor;
+  batch: PromptBatch;
+  projectRoot: string;
+  config: ResolvedDocmapConfig;
+  runner: AgentRunner;
+  instructions?: string;
+}): Promise<ParsedAgentOutput> {
+  const { module, batch, projectRoot, config, runner, instructions } = args;
+  const prompt = await buildModulePrompt(module, config, batch, instructions);
+  const elementIds = batch.elements.map((e) => e.id);
+
+  const call = (p: string) =>
+    runner
+      .run({ prompt: p, cwd: projectRoot, moduleId: module.id, elementIds, timeoutMs: config.timeoutMs, model: config.model })
+      .then((r) => parseAgentOutput(r.text));
+
+  let parsed = await call(prompt);
+
+  const failed = (p: ParsedAgentOutput) =>
+    (batch.includeBody && p.body === null) || (batch.elements.length > 0 && Object.keys(p.elements).length === 0);
+
+  let attempts = 0;
+  while (failed(parsed) && attempts < config.maxRetries) {
+    attempts += 1;
+    const stricterPrompt = `${prompt}\n\nIMPORTANT: your previous response did not include the required marker block(s). Respond again, following the output contract exactly.`;
+    parsed = await call(stricterPrompt);
+  }
+
+  return parsed;
+}
+
 async function processModule(args: {
   module: ModuleDescriptor;
   projectRoot: string;
   config: ResolvedDocmapConfig;
   logger: Logger;
-  runner: ReturnType<typeof getRunner> | null;
+  runner: AgentRunner | null;
   runnerName: RunnerName;
   force: boolean;
   dryRun: boolean;
+  instructions?: string;
 }): Promise<ModuleReport> {
-  const { module, projectRoot, config, logger, runner, runnerName, force, dryRun } = args;
+  const { module, projectRoot, config, logger, runner, runnerName, force, dryRun, instructions } = args;
   const fingerprint = await computeModuleFingerprint(module);
 
   if (!force) {
@@ -112,50 +159,51 @@ async function processModule(args: {
     }
   }
 
-  const prompt = await buildModulePrompt(module, config);
+  const batches = splitIntoBatches(module, config.maxFilesPerPrompt);
 
   if (dryRun) {
-    await writePromptCache(projectRoot, module.id, prompt);
-    logger.info(`[dry-run] ${module.id} — prompt written (~${Math.round(prompt.length / 4)} tokens est.)`);
+    for (const batch of batches) {
+      const prompt = await buildModulePrompt(module, config, batch, instructions);
+      await writePromptCache(projectRoot, module.id, prompt, batch);
+    }
+    logger.info(
+      `[dry-run] ${module.id} — ${batches.length} prompt${batches.length > 1 ? 's' : ''} written` +
+        (batches.length > 1 ? ` (${batches.length} batches)` : ''),
+    );
     return { moduleId: module.id, outcome: 'dry-run' };
   }
 
   if (!runner) throw new Error('Runner unexpectedly unavailable outside dry-run');
 
-  let parsed = parseAgentOutput(
-    (await runner.run({
-      prompt,
-      cwd: projectRoot,
-      moduleId: module.id,
-      elementIds: module.elements.map((e) => e.id),
-      timeoutMs: config.timeoutMs,
-      model: config.model,
-    })).text,
-  );
+  let moduleBody: string | null = null;
+  const mergedElements: Record<string, string> = {};
 
-  let attempts = 0;
-  while (parsed.body === null && attempts < config.maxRetries) {
-    attempts += 1;
-    const stricterPrompt = `${prompt}\n\nIMPORTANT: your previous response did not include the required ${'<<<DOCMAP_BODY_START>>>'} marker block. Respond again, following the output contract exactly.`;
-    parsed = parseAgentOutput(
-      (await runner.run({
-        prompt: stricterPrompt,
-        cwd: projectRoot,
-        moduleId: module.id,
-        elementIds: module.elements.map((e) => e.id),
-        timeoutMs: config.timeoutMs,
-        model: config.model,
-      })).text,
-    );
+  for (const batch of batches) {
+    const parsed = await runBatch({ module, batch, projectRoot, config, runner, instructions });
+    if (batch.includeBody) moduleBody = parsed.body;
+    Object.assign(mergedElements, parsed.elements);
+
+    if (batches.length > 1 && batch.elements.length > 0 && Object.keys(parsed.elements).length === 0) {
+      logger.warn(
+        `[warn] ${module.id} — batch ${batch.batchIndex + 1}/${batch.totalBatches} returned no element content, those elements will get placeholder docs`,
+      );
+    }
   }
 
-  if (parsed.body === null) {
+  if (moduleBody === null) {
     logger.warn(`[error] ${module.id} — agent did not return a valid body block`);
     return { moduleId: module.id, outcome: 'error', detail: 'missing body marker' };
   }
 
-  await writeModule({ module, projectRoot, config, runnerName, fingerprint, parsed });
-  logger.info(`[ok] ${module.id} — generated`);
+  await writeModule({
+    module,
+    projectRoot,
+    config,
+    runnerName,
+    fingerprint,
+    parsed: { body: moduleBody, elements: mergedElements },
+  });
+  logger.info(`[ok] ${module.id} — generated${batches.length > 1 ? ` (${batches.length} batches)` : ''}`);
   return { moduleId: module.id, outcome: 'generated' };
 }
 
@@ -165,7 +213,7 @@ async function writeModule(args: {
   config: ResolvedDocmapConfig;
   runnerName: RunnerName;
   fingerprint: string;
-  parsed: ReturnType<typeof parseAgentOutput>;
+  parsed: ParsedAgentOutput;
 }): Promise<void> {
   const { module, projectRoot, config, runnerName, fingerprint, parsed } = args;
   const generatedAt = new Date().toISOString();
@@ -250,8 +298,9 @@ async function writeIndex(projectRoot: string, modules: ModuleDescriptor[], _fra
   );
 }
 
-async function writePromptCache(projectRoot: string, moduleId: string, prompt: string): Promise<void> {
+async function writePromptCache(projectRoot: string, moduleId: string, prompt: string, batch: PromptBatch): Promise<void> {
   const dir = path.join(getDocmapRoot(projectRoot), '.cache', 'prompts');
   await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path.join(dir, `${moduleId}.txt`), prompt, 'utf8');
+  const filename = batch.totalBatches > 1 ? `${moduleId}.batch${batch.batchIndex}.txt` : `${moduleId}.txt`;
+  await fs.writeFile(path.join(dir, filename), prompt, 'utf8');
 }

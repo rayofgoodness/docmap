@@ -15,6 +15,7 @@ export interface GenerateOptions {
   model?: string;
   framework?: string;
   dir?: string;
+  skill?: string;
 }
 
 export async function generateCommand(options: GenerateOptions): Promise<void> {
@@ -28,6 +29,7 @@ export async function generateCommand(options: GenerateOptions): Promise<void> {
       ...(options.model ? { model: options.model } : {}),
       ...(options.framework ? { framework: options.framework as never } : {}),
       ...(options.dir ? { scanDir: options.dir } : {}),
+      ...(options.skill ? { skill: options.skill } : {}),
     },
   });
 
