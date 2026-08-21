@@ -1,0 +1,53 @@
+{
+  "name": "docmap",
+  "version": "0.1.0",
+  "description": "AI-agent-agnostic documentation-map generator for FE/BE codebases",
+  "keywords": [
+    "documentation",
+    "docs",
+    "ai",
+    "claude",
+    "codex",
+    "gemini",
+    "magento2",
+    "nuxt",
+    "cli"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "docmap": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "skills"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "cosmiconfig": "^9.0.0",
+    "execa": "^9.5.1",
+    "fast-glob": "^3.3.2",
+    "fast-xml-parser": "^5.11.0",
+    "gray-matter": "^4.0.3",
+    "p-limit": "^6.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  }
+}

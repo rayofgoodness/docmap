@@ -1,0 +1,6 @@
+{
+  "name": "vendor/magento2-fake",
+  "require": {
+    "magento/framework": "103.0.*"
+  }
+}

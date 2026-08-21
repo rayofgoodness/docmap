@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <preference for="Vendor\ModuleTwo\Api\FooInterface" type="Vendor\ModuleOne\Model\Foo"/>
+    <type name="Vendor\ModuleTwo\Controller\Index\Index">
+        <plugin name="beforeIndex" type="Vendor\ModuleOne\Plugin\BeforeIndexPlugin" sortOrder="10"/>
+    </type>
+</config>
