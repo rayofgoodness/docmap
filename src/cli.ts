@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { scanCommand } from './commands/scan.js';
 import { generateCommand } from './commands/generate.js';
@@ -7,9 +10,12 @@ import { installSkillsCommand, type SkillAgent } from './commands/installSkills.
 import { cleanCommand } from './commands/clean.js';
 import type { RunnerName } from './types.js';
 
+const packageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../package.json');
+const { version } = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { version: string };
+
 const program = new Command();
 
-program.name('docmap').description('Generate module-level *.md documentation for a codebase').version('0.1.0');
+program.name('docmap').description('Generate module-level *.md documentation for a codebase').version(version);
 
 program
   .command('init')
