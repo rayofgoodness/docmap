@@ -13,10 +13,24 @@ import { toPosixPath } from '../../utils/fsSafe.js';
 import { isIncluded, toExcludeGlobs } from '../../utils/pathFilter.js';
 import { extractImportTargets } from './heuristics.js';
 
-const TEXT_EXTENSIONS = new Set([
-  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.vue',
-  '.php', '.py', '.go', '.rb', '.java', '.cs',
+// A whitelist of "code" extensions always lags behind whatever language/format a project actually
+// uses (this adapter's whole point is to be a fallback for "other languages"). Blocklisting known
+// binary/asset types instead means any text-based format — code, markdown docs, yaml/shell deploy
+// scripts, sql migrations, whatever — is documentable by default.
+const BINARY_EXTENSIONS = new Set([
+  '.ico', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.avif', '.svg', '.icns', '.tiff',
+  '.woff', '.woff2', '.ttf', '.otf', '.eot',
+  '.mp3', '.mp4', '.mov', '.avi', '.webm', '.wav', '.ogg', '.flac',
+  '.zip', '.tar', '.gz', '.tgz', '.7z', '.rar',
+  '.exe', '.dll', '.so', '.dylib', '.bin', '.wasm', '.o', '.a', '.class', '.jar',
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+  '.db', '.sqlite', '.sqlite3',
+  '.lock',
 ]);
+
+function isDocumentable(relPath: string): boolean {
+  return !BINARY_EXTENSIONS.has(path.extname(relPath).toLowerCase());
+}
 
 async function listFiles(rootPath: string, exclude: string[], include: string[]): Promise<SourceFileRef[]> {
   const entries = await fg('**/*', {
@@ -65,7 +79,10 @@ export const genericAdapter: FrameworkAdapter = {
     for (const dir of dirs) {
       const rootPath = path.join(ctx.projectRoot, dir);
       const files = await listFiles(rootPath, ctx.config.exclude, ctx.config.include);
-      if (files.length === 0) continue;
+      const elements = files.filter((f) => isDocumentable(f.relPath)).map(toElement);
+      // A directory with files but nothing documentable (e.g. a "public" folder that's just a favicon)
+      // isn't a module worth generating docs for — skip it rather than emitting an empty "Немає." doc.
+      if (elements.length === 0) continue;
 
       modules.push({
         id: dir.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
@@ -73,7 +90,7 @@ export const genericAdapter: FrameworkAdapter = {
         rootPath,
         relRootPath: toPosixPath(dir),
         framework: 'generic',
-        elements: files.filter((f) => TEXT_EXTENSIONS.has(path.extname(f.relPath))).map(toElement),
+        elements,
         relations: [],
         files,
       });
@@ -91,7 +108,7 @@ export const genericAdapter: FrameworkAdapter = {
     for (const module of modules) {
       for (const element of module.elements) {
         const file = element.files[0];
-        if (!file || !TEXT_EXTENSIONS.has(path.extname(file.relPath))) continue;
+        if (!file) continue;
 
         let source: string;
         try {

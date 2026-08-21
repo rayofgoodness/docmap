@@ -39,6 +39,11 @@ describe('genericAdapter', () => {
     expect(names).toEqual(['moduleA']);
   });
 
+  it('skips a directory that has files but no documentable (text) elements', async () => {
+    const modules = await genericAdapter.discoverModules(makeContext());
+    expect(modules.map((m) => m.name)).not.toContain('moduleC');
+  });
+
   it('resolves a cross-module relative import as a heuristic relation', async () => {
     const { modules } = await discoverProject(makeContext());
     const moduleA = modules.find((m) => m.name === 'moduleA')!;
