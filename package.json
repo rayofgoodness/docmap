@@ -1,6 +1,6 @@
 {
   "name": "@ray_of_goodness_/docmap",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "AI-agent-agnostic documentation-map generator for FE/BE codebases",
   "publishConfig": {
     "access": "public"
