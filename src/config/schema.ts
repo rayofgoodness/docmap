@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const DocmapConfigSchema = z.object({
-  framework: z.enum(['magento2', 'nuxt4', 'generic', 'auto']).default('auto'),
+  framework: z.enum(['magento2', 'nuxt4', 'nestjs', 'generic', 'auto']).default('auto'),
   language: z.string().default('en'),
   scanDir: z.string().optional(),
   runner: z.enum(['claude', 'codex', 'gemini', 'mock']).default('claude'),

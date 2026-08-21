@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import fg from 'fast-glob';
 import type {
   DiscoveryContext,
   ElementDescriptor,
@@ -10,23 +9,10 @@ import type {
   SourceFileRef,
 } from '../types.js';
 import { toPosixPath } from '../../utils/fsSafe.js';
-import { isIncluded, toExcludeGlobs } from '../../utils/pathFilter.js';
+import { listFilesUnderDir } from '../../utils/fileListing.js';
+import { isDocumentable } from '../../utils/documentable.js';
+import { slugify } from '../../utils/slug.js';
 import { extractImportTargets } from './heuristics.js';
-
-// A whitelist of "code" extensions always lags behind whatever language/format a project actually
-// uses (this adapter's whole point is to be a fallback for "other languages"). Blocklisting known
-// binary/asset types instead means any text-based format — code, markdown docs, yaml/shell deploy
-// scripts, sql migrations, whatever — is documentable by default.
-const BINARY_EXTENSIONS = new Set([
-  '.ico', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.avif', '.svg', '.icns', '.tiff',
-  '.woff', '.woff2', '.ttf', '.otf', '.eot',
-  '.mp3', '.mp4', '.mov', '.avi', '.webm', '.wav', '.ogg', '.flac',
-  '.zip', '.tar', '.gz', '.tgz', '.7z', '.rar',
-  '.exe', '.dll', '.so', '.dylib', '.bin', '.wasm', '.o', '.a', '.class', '.jar',
-  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
-  '.db', '.sqlite', '.sqlite3',
-  '.lock',
-]);
 
 // A top-level directory with this many (or more) immediate subdirectories reads as a *container* of
 // modules (src/, app/, ...) rather than a single cohesive module — Nest/Laravel/generic backends
@@ -63,28 +49,8 @@ function isTypeGroupedContainer(subDirNames: string[]): boolean {
   return matches / subDirNames.length >= 0.5;
 }
 
-function isDocumentable(relPath: string): boolean {
-  return !BINARY_EXTENSIONS.has(path.extname(relPath).toLowerCase());
-}
-
-function slugify(relPath: string): string {
-  return relPath.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-}
-
 async function listFiles(rootPath: string, exclude: string[], include: string[]): Promise<SourceFileRef[]> {
-  const entries = await fg('**/*', {
-    cwd: rootPath,
-    onlyFiles: true,
-    dot: false,
-    ignore: toExcludeGlobs(exclude),
-  });
-  const refs: SourceFileRef[] = [];
-  for (const relPath of entries.filter((relPath) => isIncluded(relPath, include))) {
-    const absPath = path.join(rootPath, relPath);
-    const stat = await fs.stat(absPath);
-    refs.push({ absPath, relPath: toPosixPath(relPath), sizeBytes: stat.size });
-  }
-  return refs;
+  return listFilesUnderDir(rootPath, { exclude, include });
 }
 
 function toElement(file: SourceFileRef): ElementDescriptor {

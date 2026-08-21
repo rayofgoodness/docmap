@@ -1,16 +1,13 @@
 import path from 'node:path';
 import type { DiscoveryContext, FrameworkAdapter, ModuleDescriptor, RelationDescriptor } from '../types.js';
 import { toPosixPath } from '../../utils/fsSafe.js';
+import { slugify } from '../../utils/slug.js';
 import { detectMagento2, findModuleDirs } from './detect.js';
 import { readModuleName } from './moduleXml.js';
 import { collectModuleElements } from './elements.js';
 import { buildNamespaceMap } from './namespace.js';
 import { resolveMagento2XmlRelations } from './di.js';
 import { resolvePhpUseRelations } from './phpImports.js';
-
-function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-}
 
 export const magento2Adapter: FrameworkAdapter = {
   name: 'magento2',
