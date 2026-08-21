@@ -1,7 +1,11 @@
+
 {
-  "name": "docmap",
+  "name": "@ray_of_goodness_/docmap",
   "version": "0.1.0",
   "description": "AI-agent-agnostic documentation-map generator for FE/BE codebases",
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "documentation",
     "docs",
@@ -16,7 +20,7 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "docmap": "./dist/cli.js"
+    "docmap": "dist/cli.js"
   },
   "engines": {
     "node": ">=18"
