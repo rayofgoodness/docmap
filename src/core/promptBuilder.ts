@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import type { ModuleDescriptor } from '../adapters/types.js';
+import type { ModuleDescriptor, SourceFileRef } from '../adapters/types.js';
 import type { ResolvedDocmapConfig } from '../config/schema.js';
 import { BODY_END, BODY_START, ELEMENT_END, elementStartMarker } from './markers.js';
 
@@ -13,11 +13,30 @@ async function readExcerpt(absPath: string, maxBytes: number): Promise<string> {
   }
 }
 
+/**
+ * module.files can include non-text assets (e.g. a generic module that's just a favicon) kept around
+ * for fingerprinting — reading those as utf8 and stuffing the result into the prompt as "source" has
+ * derailed agents into not emitting the output markers at all. Elements are already text-classified by
+ * each adapter, so excerpting from them instead keeps binary content out of the prompt.
+ */
+function collectElementFiles(module: ModuleDescriptor): SourceFileRef[] {
+  const seen = new Set<string>();
+  const files: SourceFileRef[] = [];
+  for (const element of module.elements) {
+    for (const file of element.files) {
+      if (seen.has(file.absPath)) continue;
+      seen.add(file.absPath);
+      files.push(file);
+    }
+  }
+  return files;
+}
+
 export async function buildModulePrompt(
   module: ModuleDescriptor,
   config: ResolvedDocmapConfig,
 ): Promise<string> {
-  const files = module.files.slice(0, config.maxFilesPerPrompt);
+  const files = collectElementFiles(module).slice(0, config.maxFilesPerPrompt);
   const excerpts = await Promise.all(
     files.map(async (f) => ({
       relPath: f.relPath,
