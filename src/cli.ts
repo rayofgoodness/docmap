@@ -24,9 +24,10 @@ program
   .command('scan')
   .description('Discover modules and relations without calling any AI agent')
   .option('--framework <framework>', 'force a framework adapter')
+  .option('--dir <path>', 'restrict scanning to a subdirectory of the project')
   .option('--json', 'output JSON')
   .action(async (opts) => {
-    await scanCommand({ projectRoot: process.cwd(), framework: opts.framework, json: opts.json });
+    await scanCommand({ projectRoot: process.cwd(), framework: opts.framework, json: opts.json, dir: opts.dir });
   });
 
 program
@@ -41,6 +42,7 @@ program
   .option('--fail-fast', 'abort on first module error')
   .option('--model <model>', 'model override passed to the runner')
   .option('--framework <framework>', 'force a framework adapter')
+  .option('--dir <path>', 'restrict scanning to a subdirectory of the project')
   .action(async (opts) => {
     await generateCommand({
       projectRoot: process.cwd(),
@@ -53,6 +55,7 @@ program
       failFast: opts.failFast,
       model: opts.model,
       framework: opts.framework,
+      dir: opts.dir,
     });
   });
 
@@ -60,8 +63,9 @@ program
   .command('status')
   .description('Show per-module doc status (missing/up-to-date/stale)')
   .option('--json', 'output JSON')
+  .option('--dir <path>', 'restrict scanning to a subdirectory of the project')
   .action(async (opts) => {
-    await statusCommand({ projectRoot: process.cwd(), json: opts.json });
+    await statusCommand({ projectRoot: process.cwd(), json: opts.json, dir: opts.dir });
   });
 
 program

@@ -7,13 +7,17 @@ export interface ScanOptions {
   projectRoot: string;
   framework?: string;
   json?: boolean;
+  dir?: string;
 }
 
 export async function scanCommand(options: ScanOptions): Promise<void> {
   const logger = createLogger();
   const config = await loadConfig({
     projectRoot: options.projectRoot,
-    overrides: options.framework ? { framework: options.framework as never } : undefined,
+    overrides: {
+      ...(options.framework ? { framework: options.framework as never } : {}),
+      ...(options.dir ? { scanDir: options.dir } : {}),
+    },
   });
 
   const ctx: DiscoveryContext = { projectRoot: options.projectRoot, config, logger };

@@ -10,6 +10,7 @@ export type DocStatus = 'missing' | 'up-to-date' | 'stale';
 export interface StatusOptions {
   projectRoot: string;
   json?: boolean;
+  dir?: string;
 }
 
 export interface ModuleStatusReport {
@@ -20,7 +21,10 @@ export interface ModuleStatusReport {
 
 export async function statusCommand(options: StatusOptions): Promise<void> {
   const logger = createLogger();
-  const config = await loadConfig({ projectRoot: options.projectRoot });
+  const config = await loadConfig({
+    projectRoot: options.projectRoot,
+    overrides: options.dir ? { scanDir: options.dir } : undefined,
+  });
   const ctx: DiscoveryContext = { projectRoot: options.projectRoot, config, logger };
   const { modules } = await discoverProject(ctx);
 

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { getDefaultConfig } from '../config/defaults.js';
 import { getDocmapRoot } from '../core/docWriter.js';
 import { createLogger } from '../utils/logger.js';
+import { ensureGitignoreEntry } from '../utils/gitignore.js';
 
 export interface InitOptions {
   projectRoot: string;
@@ -29,5 +30,6 @@ export async function initCommand(options: InitOptions): Promise<void> {
   }
 
   await fs.mkdir(getDocmapRoot(options.projectRoot), { recursive: true });
+  await ensureGitignoreEntry(options.projectRoot, '.docmap/', logger);
   logger.info(`Ready. Run "docmap scan" to preview modules, then "docmap generate".`);
 }

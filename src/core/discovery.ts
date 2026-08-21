@@ -1,5 +1,6 @@
 import type { DiscoveryContext, ModuleDescriptor } from '../adapters/types.js';
 import { resolveAdapter } from '../adapters/registry.js';
+import { loadScopeFilters, filterFilesInScope } from './scopeFilter.js';
 
 export interface DiscoveryResult {
   frameworkName: string;
@@ -10,6 +11,14 @@ export async function discoverProject(ctx: DiscoveryContext): Promise<DiscoveryR
   const adapter = await resolveAdapter(ctx);
   const modules = await adapter.discoverModules(ctx);
 
+  const scope = await loadScopeFilters(ctx.projectRoot, ctx.config.scanDir);
+  for (const module of modules) {
+    module.files = filterFilesInScope(module.files, ctx.projectRoot, scope);
+    module.elements = module.elements
+      .map((element) => ({ ...element, files: filterFilesInScope(element.files, ctx.projectRoot, scope) }))
+      .filter((element) => element.files.length > 0);
+  }
+
   const relations = adapter.resolveRelations ? await adapter.resolveRelations(modules, ctx) : [];
   for (const relation of relations) {
     const [moduleId] = relation.fromId.split('::');
@@ -17,5 +26,12 @@ export async function discoverProject(ctx: DiscoveryContext): Promise<DiscoveryR
     if (module) module.relations.push(relation);
   }
 
-  return { frameworkName: adapter.name, modules };
+  // A --dir restriction should make out-of-scope modules disappear entirely, not just show up empty —
+  // that's the whole point of "only scan this folder". Gitignore/include filtering, by contrast, can
+  // legitimately leave a module with 0 surviving elements without meaning the module itself is irrelevant.
+  const resultModules = scope.scanDirPrefix
+    ? modules.filter((m) => m.files.length > 0 || m.elements.length > 0)
+    : modules;
+
+  return { frameworkName: adapter.name, modules: resultModules };
 }

@@ -14,6 +14,7 @@ export interface GenerateOptions {
   failFast?: boolean;
   model?: string;
   framework?: string;
+  dir?: string;
 }
 
 export async function generateCommand(options: GenerateOptions): Promise<void> {
@@ -26,6 +27,7 @@ export async function generateCommand(options: GenerateOptions): Promise<void> {
       ...(options.concurrency ? { concurrency: options.concurrency } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.framework ? { framework: options.framework as never } : {}),
+      ...(options.dir ? { scanDir: options.dir } : {}),
     },
   });
 
