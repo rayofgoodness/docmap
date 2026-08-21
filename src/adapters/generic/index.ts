@@ -28,8 +28,18 @@ const BINARY_EXTENSIONS = new Set([
   '.lock',
 ]);
 
+// A top-level directory with this many (or more) immediate subdirectories reads as a *container* of
+// modules (src/, app/, ...) rather than a single cohesive module — Nest/Laravel/generic backends
+// commonly put every feature under one such directory. Below the threshold it stays one flat module,
+// which is what small/simple projects (and this adapter's own fixtures) expect.
+const SUBMODULE_SPLIT_THRESHOLD = 3;
+
 function isDocumentable(relPath: string): boolean {
   return !BINARY_EXTENSIONS.has(path.extname(relPath).toLowerCase());
+}
+
+function slugify(relPath: string): string {
+  return relPath.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
 async function listFiles(rootPath: string, exclude: string[], include: string[]): Promise<SourceFileRef[]> {
@@ -57,12 +67,33 @@ function toElement(file: SourceFileRef): ElementDescriptor {
   };
 }
 
+function buildModule(id: string, name: string, rootPath: string, relRootPath: string, files: SourceFileRef[]): ModuleDescriptor | null {
+  const elements = files.filter((f) => isDocumentable(f.relPath)).map(toElement);
+  // A directory with files but nothing documentable (e.g. a "public" folder that's just a favicon)
+  // isn't a module worth generating docs for — skip it rather than emitting an empty "Немає." doc.
+  if (elements.length === 0) return null;
+  return { id, name, rootPath, relRootPath: toPosixPath(relRootPath), framework: 'generic', elements, relations: [], files };
+}
+
 async function resolveModuleDirs(ctx: DiscoveryContext): Promise<string[]> {
   const entries = await fs.readdir(ctx.projectRoot, { withFileTypes: true });
   return entries
     .filter((e) => e.isDirectory())
     .map((e) => e.name)
     .filter((name) => !name.startsWith('.') && !ctx.config.exclude.includes(name));
+}
+
+async function listImmediateSubdirs(dirAbsPath: string, exclude: string[]): Promise<string[]> {
+  let entries;
+  try {
+    entries = await fs.readdir(dirAbsPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+    .filter((name) => !name.startsWith('.') && !exclude.includes(name));
 }
 
 export const genericAdapter: FrameworkAdapter = {
@@ -73,27 +104,36 @@ export const genericAdapter: FrameworkAdapter = {
   },
 
   async discoverModules(ctx: DiscoveryContext): Promise<ModuleDescriptor[]> {
+    const { projectRoot, config } = ctx;
     const dirs = await resolveModuleDirs(ctx);
     const modules: ModuleDescriptor[] = [];
 
     for (const dir of dirs) {
-      const rootPath = path.join(ctx.projectRoot, dir);
-      const files = await listFiles(rootPath, ctx.config.exclude, ctx.config.include);
-      const elements = files.filter((f) => isDocumentable(f.relPath)).map(toElement);
-      // A directory with files but nothing documentable (e.g. a "public" folder that's just a favicon)
-      // isn't a module worth generating docs for — skip it rather than emitting an empty "Немає." doc.
-      if (elements.length === 0) continue;
+      const rootPath = path.join(projectRoot, dir);
+      const subDirNames = await listImmediateSubdirs(rootPath, config.exclude);
 
-      modules.push({
-        id: dir.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
-        name: dir,
-        rootPath,
-        relRootPath: toPosixPath(dir),
-        framework: 'generic',
-        elements,
-        relations: [],
-        files,
-      });
+      if (subDirNames.length < SUBMODULE_SPLIT_THRESHOLD) {
+        const files = await listFiles(rootPath, config.exclude, config.include);
+        const module = buildModule(slugify(dir), dir, rootPath, dir, files);
+        if (module) modules.push(module);
+        continue;
+      }
+
+      // Container directory: one module per immediate subdirectory (recursing exactly one level —
+      // a feature's own dto/entities/tests subfolders stay part of that feature, not new modules),
+      // plus a module for any bootstrap files sitting directly in the container itself.
+      const rootFiles = await listFiles(rootPath, config.exclude, config.include);
+      const looseFiles = rootFiles.filter((f) => !f.relPath.includes('/'));
+      const looseModule = buildModule(slugify(dir), dir, rootPath, dir, looseFiles);
+      if (looseModule) modules.push(looseModule);
+
+      for (const sub of subDirNames) {
+        const subRootPath = path.join(rootPath, sub);
+        const subFiles = await listFiles(subRootPath, config.exclude, config.include);
+        const subRelRoot = `${dir}/${sub}`;
+        const subModule = buildModule(slugify(subRelRoot), subRelRoot, subRootPath, subRelRoot, subFiles);
+        if (subModule) modules.push(subModule);
+      }
     }
 
     return modules;
@@ -120,9 +160,12 @@ export const genericAdapter: FrameworkAdapter = {
         for (const target of extractImportTargets(source)) {
           if (!target.startsWith('.') && !target.startsWith('/')) continue;
           const resolvedAbs = path.resolve(path.dirname(file.absPath), target);
-          const targetModule = modules.find(
-            (m) => m.id !== module.id && resolvedAbs.startsWith(m.rootPath + path.sep),
-          );
+          // A container's own "loose files" module and its per-subdirectory modules can have nested
+          // rootPaths (e.g. "src" and "src/availability") — pick the most specific (longest) match so
+          // an import into a submodule doesn't get mis-attributed to its parent container module.
+          const targetModule = modules
+            .filter((m) => m.id !== module.id && resolvedAbs.startsWith(m.rootPath + path.sep))
+            .sort((a, b) => b.rootPath.length - a.rootPath.length)[0];
           if (!targetModule) continue;
 
           relations.push({
