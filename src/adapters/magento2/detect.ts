@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import fg from 'fast-glob';
+import { toExcludeGlobs } from '../../utils/pathFilter.js';
 
 export async function detectMagento2(projectRoot: string): Promise<boolean> {
   try {
@@ -30,7 +31,7 @@ export interface ModuleDirInfo {
 export async function findModuleDirs(projectRoot: string, exclude: string[]): Promise<ModuleDirInfo[]> {
   const registrationFiles = await fg('**/registration.php', {
     cwd: projectRoot,
-    ignore: exclude.map((e) => `**/${e}/**`),
+    ignore: toExcludeGlobs(exclude),
   });
 
   const dirs: ModuleDirInfo[] = [];

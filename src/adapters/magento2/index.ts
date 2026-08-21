@@ -30,7 +30,7 @@ export const magento2Adapter: FrameworkAdapter = {
       const ownDirName = path.basename(dir.absPath);
       const magentoModuleName = declaredName ?? `${parentDirName}_${ownDirName}`;
 
-      const { elements, files } = await collectModuleElements(dir.absPath, config.exclude);
+      const { elements, files } = await collectModuleElements(dir.absPath, config.exclude, config.include);
 
       modules.push({
         id: slugify(magentoModuleName),

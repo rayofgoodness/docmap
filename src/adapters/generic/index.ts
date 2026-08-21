@@ -10,6 +10,7 @@ import type {
   SourceFileRef,
 } from '../types.js';
 import { toPosixPath } from '../../utils/fsSafe.js';
+import { isIncluded, toExcludeGlobs } from '../../utils/pathFilter.js';
 import { extractImportTargets } from './heuristics.js';
 
 const TEXT_EXTENSIONS = new Set([
@@ -17,15 +18,15 @@ const TEXT_EXTENSIONS = new Set([
   '.php', '.py', '.go', '.rb', '.java', '.cs',
 ]);
 
-async function listFiles(rootPath: string, exclude: string[]): Promise<SourceFileRef[]> {
+async function listFiles(rootPath: string, exclude: string[], include: string[]): Promise<SourceFileRef[]> {
   const entries = await fg('**/*', {
     cwd: rootPath,
     onlyFiles: true,
     dot: false,
-    ignore: exclude.map((e) => `**/${e}/**`),
+    ignore: toExcludeGlobs(exclude),
   });
   const refs: SourceFileRef[] = [];
-  for (const relPath of entries) {
+  for (const relPath of entries.filter((relPath) => isIncluded(relPath, include))) {
     const absPath = path.join(rootPath, relPath);
     const stat = await fs.stat(absPath);
     refs.push({ absPath, relPath: toPosixPath(relPath), sizeBytes: stat.size });
@@ -63,7 +64,7 @@ export const genericAdapter: FrameworkAdapter = {
 
     for (const dir of dirs) {
       const rootPath = path.join(ctx.projectRoot, dir);
-      const files = await listFiles(rootPath, ctx.config.exclude);
+      const files = await listFiles(rootPath, ctx.config.exclude, ctx.config.include);
       if (files.length === 0) continue;
 
       modules.push({

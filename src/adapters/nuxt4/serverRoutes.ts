@@ -22,8 +22,9 @@ export async function buildServerModule(
   serverRootAbsPath: string,
   projectRoot: string,
   exclude: string[],
+  include: string[],
 ): Promise<ModuleDescriptor | null> {
-  const files = await listFilesUnder(serverRootAbsPath, exclude);
+  const files = await listFilesUnder(serverRootAbsPath, exclude, include);
   if (files.length === 0) return null;
 
   const elements: ElementDescriptor[] = files.map((file) => ({

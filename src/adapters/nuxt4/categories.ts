@@ -24,8 +24,9 @@ export async function buildCategoryModule(
   categoryRootAbsPath: string,
   projectRoot: string,
   exclude: string[],
+  include: string[],
 ): Promise<ModuleDescriptor | null> {
-  const files = await listFilesUnder(categoryRootAbsPath, exclude);
+  const files = await listFilesUnder(categoryRootAbsPath, exclude, include);
   if (files.length === 0) return null;
 
   const elements: ElementDescriptor[] = files.map((file) => ({

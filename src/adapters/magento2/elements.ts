@@ -3,6 +3,7 @@ import fg from 'fast-glob';
 import fs from 'node:fs/promises';
 import type { ElementDescriptor, ElementKind, SourceFileRef } from '../types.js';
 import { toPosixPath } from '../../utils/fsSafe.js';
+import { isIncluded, toExcludeGlobs } from '../../utils/pathFilter.js';
 
 const KIND_BY_TOP_DIR: Record<string, ElementKind> = {
   Controller: 'controller',
@@ -18,17 +19,18 @@ const KIND_BY_TOP_DIR: Record<string, ElementKind> = {
 export async function collectModuleElements(
   moduleRootAbsPath: string,
   exclude: string[],
+  include: string[],
 ): Promise<{ elements: ElementDescriptor[]; files: SourceFileRef[] }> {
   const phpFiles = await fg(Object.keys(KIND_BY_TOP_DIR).map((dir) => `${dir}/**/*.php`), {
     cwd: moduleRootAbsPath,
     onlyFiles: true,
-    ignore: exclude.map((e) => `**/${e}/**`),
+    ignore: toExcludeGlobs(exclude),
   });
 
   const elements: ElementDescriptor[] = [];
   const files: SourceFileRef[] = [];
 
-  for (const relPath of phpFiles) {
+  for (const relPath of phpFiles.filter((relPath) => isIncluded(relPath, include))) {
     const absPath = path.join(moduleRootAbsPath, relPath);
     const stat = await fs.stat(absPath);
     const file: SourceFileRef = { absPath, relPath: toPosixPath(relPath), sizeBytes: stat.size };

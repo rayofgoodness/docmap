@@ -12,9 +12,10 @@ async function buildLayerModule(
   layerRelPath: string,
   projectRoot: string,
   exclude: string[],
+  include: string[],
 ): Promise<ModuleDescriptor | null> {
   const rootPath = path.resolve(projectRoot, layerRelPath);
-  const files = await listFilesUnder(rootPath, exclude);
+  const files = await listFilesUnder(rootPath, exclude, include);
   if (files.length === 0) return null;
 
   return {
@@ -47,18 +48,24 @@ export const nuxt4Adapter: FrameworkAdapter = {
         path.join(appRoot, category.dirName),
         projectRoot,
         config.exclude,
+        config.include,
       );
       if (module) modules.push(module);
     }
 
-    const serverModule = await buildServerModule(path.join(projectRoot, 'server'), projectRoot, config.exclude);
+    const serverModule = await buildServerModule(
+      path.join(projectRoot, 'server'),
+      projectRoot,
+      config.exclude,
+      config.include,
+    );
     if (serverModule) modules.push(serverModule);
 
     const configPath = await findNuxtConfigPath(projectRoot);
     if (configPath) {
       const configSource = await fs.readFile(configPath, 'utf8');
       for (const layer of findExtendsLayers(configSource)) {
-        const layerModule = await buildLayerModule(layer, projectRoot, config.exclude);
+        const layerModule = await buildLayerModule(layer, projectRoot, config.exclude, config.include);
         if (layerModule) modules.push(layerModule);
       }
     }

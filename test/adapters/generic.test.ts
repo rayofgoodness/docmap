@@ -12,8 +12,8 @@ const FIXTURE_ROOT = path.resolve(
   '../fixtures/generic-fake',
 );
 
-function makeContext(): DiscoveryContext {
-  return { projectRoot: FIXTURE_ROOT, config: getDefaultConfig(), logger: createLogger() };
+function makeContext(configOverrides: Partial<ReturnType<typeof getDefaultConfig>> = {}): DiscoveryContext {
+  return { projectRoot: FIXTURE_ROOT, config: { ...getDefaultConfig(), ...configOverrides }, logger: createLogger() };
 }
 
 describe('genericAdapter', () => {
@@ -29,6 +29,14 @@ describe('genericAdapter', () => {
       expect(module.framework).toBe('generic');
       expect(module.elements).toHaveLength(1);
     }
+  });
+
+  it('restricts discovery to files matching config.include (matched per module root)', async () => {
+    // moduleA contains index.ts, moduleB contains helper.ts — include filters files within each
+    // scanned module subtree, so this drops moduleB's only file and the (now-empty) module with it.
+    const modules = await genericAdapter.discoverModules(makeContext({ include: ['index.ts'] }));
+    const names = modules.map((m) => m.name);
+    expect(names).toEqual(['moduleA']);
   });
 
   it('resolves a cross-module relative import as a heuristic relation', async () => {
