@@ -91,6 +91,30 @@ describe('buildModulePrompt', () => {
     expect(prompt).toContain('Always write in a formal tone.');
   });
 
+  it('includes the detailed element template in both first and later batches', async () => {
+    const files = Array.from({ length: 25 }, (_, i) => ({ absPath: `f${i}.ts`, relPath: `f${i}.ts`, sizeBytes: 1 }));
+    const module: ModuleDescriptor = {
+      id: 'm',
+      name: 'm',
+      rootPath: tmpDir,
+      relRootPath: 'm',
+      framework: 'generic',
+      elements: files.map(elementOf),
+      relations: [],
+      files,
+    };
+    const config = getDefaultConfig();
+    const batches = splitIntoBatches(module, 20);
+    const first = await buildModulePrompt(module, config, batches[0]!);
+    const later = await buildModulePrompt(module, config, batches[1]!);
+
+    for (const prompt of [first, later]) {
+      expect(prompt).toContain('### Data');
+      expect(prompt).toContain('### Logic');
+      expect(prompt).toContain('never invent fields');
+    }
+  });
+
   it('deduplicates and caps the module-level relationship summary', async () => {
     const relations: RelationDescriptor[] = Array.from({ length: 60 }, (_, i) => ({
       type: 'import',

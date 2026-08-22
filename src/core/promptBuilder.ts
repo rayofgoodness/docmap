@@ -114,13 +114,24 @@ export async function buildModulePrompt(
   const elementLines = batch.elements.map((e) => buildElementSection(e, module.id, module.relations)).join('\n');
   const fileBlocks = excerpts.map((e) => `### ${e.relPath}\n\`\`\`\n${e.content}\n\`\`\``).join('\n\n');
 
+  const elementTemplate = [
+    'Each element block must be detailed documentation of that file, with these four sections (render the headings translated into the documentation language):',
+    '  ### Purpose — 2-4 sentences: what the file does and the user-facing behavior it implements.',
+    '  ### Data — a bullet list of the concrete data the file works with: every prop, store field, composable return, API response field, route/query param it reads or writes. For each: `name` (type) — what it represents and what it controls. Use the exact identifiers from the source (e.g. `quantity` — number of product units in the cart, drives the stepper and max-stock validation) so a developer searching the docs can find which parameter is responsible for what.',
+    '  ### Logic — key business rules, conditions, computed values, and edge cases visible in the source (when a button is hidden, how a discount is computed, limits).',
+    '  ### Relationships — which components/stores/composables/API endpoints it uses and what data flows through each (omit the section if none).',
+    'Base everything on the actual source excerpts — never invent fields that are not in the code. If an element\'s source was not included in the excerpts, write only what the relations reveal and mark it "(source not shown)" translated into the documentation language.',
+  ].join('\n');
+
   const outputContract = batch.includeBody
     ? [
         `1. One module overview block: ${BODY_START}\\n## Purpose\\n...\\n## Responsibilities\\n...\\n## Business Logic\\n...\\n## Inputs / Outputs\\n...\\n## Relationships\\n...\\n${BODY_END}`,
         `2. One block per element listed above: ${elementStartMarker('<element id>')}\\n...\\n${ELEMENT_END}`,
+        elementTemplate,
       ]
     : [
         `Respond with ONLY one block per element listed above — this batch does not need a module overview block (already written from an earlier batch): ${elementStartMarker('<element id>')}\\n...\\n${ELEMENT_END}`,
+        elementTemplate,
       ];
 
   const lines: string[] = [

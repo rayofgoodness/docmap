@@ -13,7 +13,7 @@ export const DocmapConfigSchema = z.object({
     .array(z.string())
     .default(['node_modules', 'vendor', '.git', 'dist', 'build', '.docmap']),
   maxFilesPerPrompt: z.number().int().positive().default(20),
-  maxFileExcerptBytes: z.number().int().positive().default(4000),
+  maxFileExcerptBytes: z.number().int().positive().default(12000),
   maxRetries: z.number().int().min(0).default(1),
   timeoutMs: z.number().int().positive().default(120_000),
   elementDocThreshold: z.number().int().min(0).default(1),
