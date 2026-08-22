@@ -6,6 +6,9 @@ export function buildClaudeArgs(invocation: RunnerInvocation): string[] {
     '-p', invocation.prompt,
     '--output-format', 'json',
     '--allowedTools', (invocation.allowedTools ?? ['Read', 'Grep', 'Glob']).join(','),
+    // No --mcp-config is passed, so this disables MCP entirely: doc batches only need
+    // Read/Grep/Glob, and spawning the user's MCP servers on every batch adds startup cost.
+    '--strict-mcp-config',
   ];
   if (invocation.model) args.push('--model', invocation.model);
   if (invocation.extraArgs) args.push(...invocation.extraArgs);

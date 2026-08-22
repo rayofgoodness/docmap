@@ -108,13 +108,18 @@ export async function runGenerate(options: GenerateOptions): Promise<GenerateSum
 export interface BatchOutcome {
   parsed: ParsedAgentOutput;
   lastResult: RunnerResult;
+  /** The timeout the last attempt actually ran with — retries after a timeout escalate it. */
+  effectiveTimeoutMs: number;
+}
+
+export function isLikelyTimeout(result: RunnerResult, timeoutMs: number): boolean {
+  return !result.ok && result.durationMs >= timeoutMs * 0.95;
 }
 
 /** Turns a failed runner call into a one-line, actionable reason instead of a bare "no content" warning. */
 export function describeBatchFailure(result: RunnerResult, timeoutMs: number): string {
   if (!result.ok) {
-    const nearTimeout = result.durationMs >= timeoutMs * 0.95;
-    const cause = nearTimeout
+    const cause = isLikelyTimeout(result, timeoutMs)
       ? `likely timed out (ran ${Math.round(result.durationMs / 1000)}s against a ${Math.round(timeoutMs / 1000)}s limit)`
       : `runner exited ${result.exitCode ?? 'with no code'}${result.error ? `: ${result.error}` : ''}`;
     return cause;
@@ -122,7 +127,7 @@ export function describeBatchFailure(result: RunnerResult, timeoutMs: number): s
   return 'agent responded but without the required marker block(s)';
 }
 
-async function runBatch(args: {
+export async function runBatch(args: {
   module: ModuleDescriptor;
   batch: PromptBatch;
   projectRoot: string;
@@ -134,19 +139,20 @@ async function runBatch(args: {
   const prompt = await buildModulePrompt(module, config, batch, instructions);
   const elementIds = batch.elements.map((e) => e.id);
 
-  const call = async (p: string) => {
+  const call = async (p: string, timeoutMs: number) => {
     const result = await runner.run({
       prompt: p,
       cwd: projectRoot,
       moduleId: module.id,
       elementIds,
-      timeoutMs: config.timeoutMs,
+      timeoutMs,
       model: config.model,
     });
     return { result, parsed: parseAgentOutput(result.text) };
   };
 
-  let { result, parsed } = await call(prompt);
+  let timeoutMs = config.timeoutMs;
+  let { result, parsed } = await call(prompt, timeoutMs);
 
   const failed = (p: ParsedAgentOutput) =>
     (batch.includeBody && p.body === null) || (batch.elements.length > 0 && Object.keys(p.elements).length === 0);
@@ -154,11 +160,17 @@ async function runBatch(args: {
   let attempts = 0;
   while (failed(parsed) && attempts < config.maxRetries) {
     attempts += 1;
-    const stricterPrompt = `${prompt}\n\nIMPORTANT: your previous response did not include the required marker block(s). Respond again, following the output contract exactly.`;
-    ({ result, parsed } = await call(stricterPrompt));
+    if (isLikelyTimeout(result, timeoutMs)) {
+      // The agent never finished, so a stricter prompt can't help — more time can.
+      timeoutMs *= 2;
+      ({ result, parsed } = await call(prompt, timeoutMs));
+    } else {
+      const stricterPrompt = `${prompt}\n\nIMPORTANT: your previous response did not include the required marker block(s). Respond again, following the output contract exactly.`;
+      ({ result, parsed } = await call(stricterPrompt, timeoutMs));
+    }
   }
 
-  return { parsed, lastResult: result };
+  return { parsed, lastResult: result, effectiveTimeoutMs: timeoutMs };
 }
 
 async function processModule(args: {
@@ -205,17 +217,17 @@ async function processModule(args: {
   let bodyFailureReason: string | null = null;
 
   for (const batch of batches) {
-    const { parsed, lastResult } = await runBatch({ module, batch, projectRoot, config, runner, instructions });
+    const { parsed, lastResult, effectiveTimeoutMs } = await runBatch({ module, batch, projectRoot, config, runner, instructions });
     if (batch.includeBody) {
       moduleBody = parsed.body;
-      if (parsed.body === null) bodyFailureReason = describeBatchFailure(lastResult, config.timeoutMs);
+      if (parsed.body === null) bodyFailureReason = describeBatchFailure(lastResult, effectiveTimeoutMs);
     }
     Object.assign(mergedElements, parsed.elements);
 
     if (batches.length > 1 && batch.elements.length > 0 && Object.keys(parsed.elements).length === 0) {
       logger.warn(
         `[warn] ${module.id} — batch ${batch.batchIndex + 1}/${batch.totalBatches} returned no element content ` +
-          `(${describeBatchFailure(lastResult, config.timeoutMs)}), those elements will get placeholder docs`,
+          `(${describeBatchFailure(lastResult, effectiveTimeoutMs)}), those elements will get placeholder docs`,
       );
     }
   }

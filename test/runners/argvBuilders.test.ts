@@ -16,12 +16,13 @@ function baseInvocation(overrides: Partial<RunnerInvocation> = {}): RunnerInvoca
 }
 
 describe('runner argv builders (pure, no subprocess)', () => {
-  it('claude: includes read-only allowedTools and json output by default', () => {
+  it('claude: includes read-only allowedTools, json output, and no MCP servers by default', () => {
     const args = buildClaudeArgs(baseInvocation());
     expect(args).toEqual([
       '-p', 'document this module',
       '--output-format', 'json',
       '--allowedTools', 'Read,Grep,Glob',
+      '--strict-mcp-config',
     ]);
   });
 
