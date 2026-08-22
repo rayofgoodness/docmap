@@ -11,6 +11,7 @@ import { computeModuleFingerprint } from './fingerprint.js';
 import { buildModulePrompt, splitIntoBatches, type PromptBatch } from './promptBuilder.js';
 import { parseAgentOutput, type ParsedAgentOutput } from './markers.js';
 import { createConcurrencyLimiter } from './concurrency.js';
+import { formatDuration, ProgressTracker } from './progress.js';
 import { getRunner } from '../runners/registry.js';
 import { buildModulePlaceholderBody } from '../docFormat/templates/moduleRoot.js';
 import { buildElementPlaceholderBody } from '../docFormat/templates/element.js';
@@ -72,31 +73,46 @@ export async function runGenerate(options: GenerateOptions): Promise<GenerateSum
   const reports: ModuleReport[] = [];
   let aborted = false;
 
-  await Promise.all(
-    targetModules.map((module) =>
-      limit(async () => {
-        if (aborted) return;
-        try {
-          const report = await processModule({
-            module,
-            projectRoot,
-            config,
-            logger,
-            runner,
-            runnerName,
-            force,
-            dryRun,
-            instructions,
-          });
-          reports.push(report);
-          if (report.outcome === 'error' && failFast) aborted = true;
-        } catch (err) {
-          reports.push({ moduleId: module.id, outcome: 'error', detail: (err as Error).message });
-          if (failFast) aborted = true;
-        }
-      }),
-    ),
-  );
+  const progress = new ProgressTracker(logger, targetModules.length);
+  if (!dryRun && runner) {
+    logger.info(
+      `[gen] ${targetModules.length} modules · runner=${runnerName} concurrency=${config.concurrency} timeout=${Math.round(config.timeoutMs / 1000)}s`,
+    );
+    progress.startHeartbeat();
+  }
+
+  try {
+    await Promise.all(
+      targetModules.map((module) =>
+        limit(async () => {
+          if (aborted) return;
+          try {
+            const report = await processModule({
+              module,
+              projectRoot,
+              config,
+              logger,
+              runner,
+              runnerName,
+              force,
+              dryRun,
+              instructions,
+              progress,
+            });
+            reports.push(report);
+            if (report.outcome === 'error' && failFast) aborted = true;
+          } catch (err) {
+            reports.push({ moduleId: module.id, outcome: 'error', detail: (err as Error).message });
+            if (failFast) aborted = true;
+          } finally {
+            progress.moduleFinished();
+          }
+        }),
+      ),
+    );
+  } finally {
+    progress.stop();
+  }
 
   if (!dryRun) {
     await writeIndex(projectRoot, modules, frameworkName);
@@ -134,8 +150,9 @@ export async function runBatch(args: {
   config: ResolvedDocmapConfig;
   runner: AgentRunner;
   instructions?: string;
+  logger?: Logger;
 }): Promise<BatchOutcome> {
-  const { module, batch, projectRoot, config, runner, instructions } = args;
+  const { module, batch, projectRoot, config, runner, instructions, logger } = args;
   const prompt = await buildModulePrompt(module, config, batch, instructions);
   const elementIds = batch.elements.map((e) => e.id);
 
@@ -163,9 +180,15 @@ export async function runBatch(args: {
     if (isLikelyTimeout(result, timeoutMs)) {
       // The agent never finished, so a stricter prompt can't help — more time can.
       timeoutMs *= 2;
+      logger?.info(
+        `[retry] ${module.id} — batch ${batch.batchIndex + 1}/${batch.totalBatches} attempt ${attempts + 1}/${config.maxRetries + 1} with timeout raised to ${Math.round(timeoutMs / 1000)}s`,
+      );
       ({ result, parsed } = await call(prompt, timeoutMs));
     } else {
       const stricterPrompt = `${prompt}\n\nIMPORTANT: your previous response did not include the required marker block(s). Respond again, following the output contract exactly.`;
+      logger?.info(
+        `[retry] ${module.id} — batch ${batch.batchIndex + 1}/${batch.totalBatches} attempt ${attempts + 1}/${config.maxRetries + 1} after a marker-format miss`,
+      );
       ({ result, parsed } = await call(stricterPrompt, timeoutMs));
     }
   }
@@ -183,8 +206,9 @@ async function processModule(args: {
   force: boolean;
   dryRun: boolean;
   instructions?: string;
+  progress?: ProgressTracker;
 }): Promise<ModuleReport> {
-  const { module, projectRoot, config, logger, runner, runnerName, force, dryRun, instructions } = args;
+  const { module, projectRoot, config, logger, runner, runnerName, force, dryRun, instructions, progress } = args;
   const fingerprint = await computeModuleFingerprint(module);
 
   if (!force) {
@@ -217,7 +241,28 @@ async function processModule(args: {
   let bodyFailureReason: string | null = null;
 
   for (const batch of batches) {
-    const { parsed, lastResult, effectiveTimeoutMs } = await runBatch({ module, batch, projectRoot, config, runner, instructions });
+    const label = `${module.id}#${batch.batchIndex + 1}`;
+    logger.info(
+      `[run] ${module.id} — batch ${batch.batchIndex + 1}/${batch.totalBatches} (${batch.elements.length} elements)`,
+    );
+    progress?.batchStarted(label);
+    const batchStartedAt = Date.now();
+    let outcome: BatchOutcome;
+    try {
+      outcome = await runBatch({ module, batch, projectRoot, config, runner, instructions, logger });
+    } finally {
+      progress?.batchFinished(label);
+    }
+    const { parsed, lastResult, effectiveTimeoutMs } = outcome;
+
+    const batchFailed =
+      (batch.includeBody && parsed.body === null) || (batch.elements.length > 0 && Object.keys(parsed.elements).length === 0);
+    if (!batchFailed) {
+      logger.info(
+        `[ok] ${module.id} — batch ${batch.batchIndex + 1}/${batch.totalBatches} in ${formatDuration(Date.now() - batchStartedAt)}`,
+      );
+    }
+
     if (batch.includeBody) {
       moduleBody = parsed.body;
       if (parsed.body === null) bodyFailureReason = describeBatchFailure(lastResult, effectiveTimeoutMs);
