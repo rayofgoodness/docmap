@@ -8,10 +8,11 @@ import { statusCommand } from './commands/status.js';
 import { initCommand } from './commands/init.js';
 import { installSkillsCommand, type SkillAgent } from './commands/installSkills.js';
 import { cleanCommand } from './commands/clean.js';
+import { checkForUpdate, formatUpdateNotice } from './utils/updateCheck.js';
 import type { RunnerName } from './types.js';
 
 const packageJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../package.json');
-const { version } = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { version: string };
+const { name, version } = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { name: string; version: string };
 
 const program = new Command();
 
@@ -92,7 +93,15 @@ program
     await cleanCommand({ projectRoot: process.cwd(), yes: opts.yes });
   });
 
-program.parseAsync(process.argv).catch((err) => {
-  console.error(`[fatal] ${(err as Error).message}`);
-  process.exitCode = 1;
-});
+const updateAvailable = checkForUpdate({ packageName: name, currentVersion: version });
+
+program
+  .parseAsync(process.argv)
+  .catch((err) => {
+    console.error(`[fatal] ${(err as Error).message}`);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    const latest = await updateAvailable;
+    if (latest) console.error(formatUpdateNotice(name, version, latest, process.stderr.isTTY === true));
+  });
