@@ -23,6 +23,24 @@ function extractText(stdout: string): string {
   return stdout;
 }
 
+/** The claude CLI prefers ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN over
+ * the user's claude.ai login when any is present. A stale/invalid credential in the shell profile
+ * then fails every batch with exit 1 even though `claude` works interactively. When the CLI itself
+ * reports that conflict, retry once with those variables stripped so the login session is used;
+ * environments that genuinely auth via a valid key never hit this path (they don't exit non-zero). */
+const AUTH_CONFLICT_MARKER = 'auth source is set';
+const AUTH_ENV_VARS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'] as const;
+
+async function execClaude(invocation: RunnerInvocation, env?: Record<string, string | undefined>) {
+  return execa('claude', buildClaudeArgs(invocation), {
+    cwd: invocation.cwd,
+    timeout: invocation.timeoutMs,
+    reject: false,
+    stdin: 'ignore',
+    ...(env ? { env, extendEnv: false } : {}),
+  });
+}
+
 export const claudeRunner: AgentRunner = {
   name: 'claude',
 
@@ -38,11 +56,16 @@ export const claudeRunner: AgentRunner = {
   async run(invocation: RunnerInvocation): Promise<RunnerResult> {
     const start = Date.now();
     try {
-      const result = await execa('claude', buildClaudeArgs(invocation), {
-        cwd: invocation.cwd,
-        timeout: invocation.timeoutMs,
-        reject: false,
-      });
+      let result = await execClaude(invocation);
+      if (
+        result.exitCode !== 0 &&
+        AUTH_ENV_VARS.some((v) => process.env[v]) &&
+        `${result.stderr}\n${result.stdout}`.includes(AUTH_CONFLICT_MARKER)
+      ) {
+        const cleanEnv: Record<string, string | undefined> = { ...process.env };
+        for (const v of AUTH_ENV_VARS) delete cleanEnv[v];
+        result = await execClaude(invocation, cleanEnv);
+      }
       const rawOutput = result.stdout;
       return {
         ok: result.exitCode === 0,
