@@ -104,6 +104,21 @@ describe('runBatch retry behavior', () => {
     expect(outcome.parsed.body).toBe('module docs');
   });
 
+  it('resends the unmodified prompt at the same timeout when the runner itself failed fast (not a timeout)', async () => {
+    const { runner, invocations } = fakeRunner([
+      runnerResult({ ok: false, durationMs: 50, exitCode: 1, error: "model not found" }),
+      runnerResult({ text: successText }),
+    ]);
+
+    const outcome = await runSingleBatch(runner, { timeoutMs: 1000, maxRetries: 1 });
+
+    expect(invocations).toHaveLength(2);
+    expect(invocations[1]!.timeoutMs).toBe(1000);
+    expect(invocations[1]!.prompt).toBe(invocations[0]!.prompt);
+    expect(invocations[1]!.prompt).not.toContain('did not include the required marker');
+    expect(outcome.parsed.body).toBe('module docs');
+  });
+
   it('reports the escalated timeout after exhausting retries on repeated timeouts', async () => {
     const { runner, invocations } = fakeRunner([
       runnerResult({ ok: false, durationMs: 1000, exitCode: null }),

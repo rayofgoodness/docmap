@@ -26,6 +26,22 @@ function extractText(stdout: string): string {
   return stdout;
 }
 
+/** On failure the CLI often writes the actual reason (bad model, API error, refusal) into the
+ * `result` field of its JSON stdout rather than to stderr — stderr can be entirely empty. Falling
+ * back to stderr-only left failed batches reported as a bare "runner exited 1" with no explanation. */
+export function extractErrorMessage(stdout: string, stderr: string): string | undefined {
+  const trimmedStderr = stderr.trim();
+  if (trimmedStderr) return trimmedStderr;
+  try {
+    const parsed = JSON.parse(stdout);
+    if (parsed?.is_error && typeof parsed?.result === 'string' && parsed.result.trim()) return parsed.result.trim();
+  } catch {
+    // stdout wasn't JSON — fall through
+  }
+  const trimmedStdout = stdout.trim();
+  return trimmedStdout ? trimmedStdout.slice(0, 500) : undefined;
+}
+
 /** The claude CLI prefers ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN over
  * the user's claude.ai login when any is present. A stale/invalid credential in the shell profile
  * then fails every batch with exit 1 even though `claude` works interactively. When the CLI itself
@@ -76,7 +92,7 @@ export const claudeRunner: AgentRunner = {
         text: extractText(rawOutput),
         durationMs: Date.now() - start,
         exitCode: result.exitCode ?? null,
-        error: result.exitCode === 0 ? undefined : result.stderr,
+        error: result.exitCode === 0 ? undefined : extractErrorMessage(result.stdout, result.stderr),
       };
     } catch (err) {
       return {

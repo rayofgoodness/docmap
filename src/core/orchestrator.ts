@@ -184,6 +184,13 @@ export async function runBatch(args: {
         `[retry] ${module.id} — batch ${batch.batchIndex + 1}/${batch.totalBatches} attempt ${attempts + 1}/${config.maxRetries + 1} with timeout raised to ${Math.round(timeoutMs / 1000)}s`,
       );
       ({ result, parsed } = await call(prompt, timeoutMs));
+    } else if (!result.ok) {
+      // The runner call itself failed (bad model, API error, transient overload) — the prompt was
+      // never the problem, so resend it unchanged; a "fix your markers" reminder would be misleading.
+      logger?.info(
+        `[retry] ${module.id} — batch ${batch.batchIndex + 1}/${batch.totalBatches} attempt ${attempts + 1}/${config.maxRetries + 1} after a runner error: ${describeBatchFailure(result, timeoutMs)}`,
+      );
+      ({ result, parsed } = await call(prompt, timeoutMs));
     } else {
       const stricterPrompt = `${prompt}\n\nIMPORTANT: your previous response did not include the required marker block(s). Respond again, following the output contract exactly.`;
       logger?.info(
