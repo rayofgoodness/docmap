@@ -1,7 +1,10 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { magento2Adapter } from '../../src/adapters/magento2/index.js';
+import { detectMagento2 } from '../../src/adapters/magento2/detect.js';
 import { discoverProject } from '../../src/core/discovery.js';
 import { getDefaultConfig } from '../../src/config/defaults.js';
 import { createLogger } from '../../src/utils/logger.js';
@@ -21,6 +24,24 @@ describe('magento2Adapter', () => {
 
   it('does not detect a plain generic project', async () => {
     await expect(magento2Adapter.detect(makeContext(GENERIC_FIXTURE_ROOT))).resolves.toBe(false);
+  });
+
+  it.each([
+    'magento/product-community-edition',
+    'magento/product-enterprise-edition',
+    'magento/magento-cloud-metapackage',
+    'mage-os/product-community-edition',
+  ])('detects via composer.json requiring %s with no app/etc/env.php present', async (packageName) => {
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'magento2-detect-'));
+    try {
+      await fs.writeFile(
+        path.join(tmpRoot, 'composer.json'),
+        JSON.stringify({ name: 'vendor/adobe-commerce-fake', require: { [packageName]: '1.0.0' } }),
+      );
+      await expect(detectMagento2(tmpRoot)).resolves.toBe(true);
+    } finally {
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
   });
 
   it('discovers both modules by their declared module.xml name', async () => {

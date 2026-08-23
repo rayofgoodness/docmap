@@ -8,7 +8,13 @@ export async function detectMagento2(projectRoot: string): Promise<boolean> {
     const composerRaw = await fs.readFile(path.join(projectRoot, 'composer.json'), 'utf8');
     const composer = JSON.parse(composerRaw);
     const deps = { ...composer.require, ...composer['require-dev'] };
-    if (Object.keys(deps).some((name) => name.startsWith('magento/framework') || name === 'magento/product-community-edition')) {
+    const knownPackageNames = new Set([
+      'magento/product-community-edition',
+      'magento/product-enterprise-edition',
+      'magento/magento-cloud-metapackage',
+      'mage-os/product-community-edition',
+    ]);
+    if (Object.keys(deps).some((name) => name.startsWith('magento/framework') || knownPackageNames.has(name))) {
       return true;
     }
   } catch {
