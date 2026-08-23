@@ -74,4 +74,18 @@ describe('discoverProject reverse "used by" index', () => {
     );
     expect(diDependentEntries).toHaveLength(1);
   });
+
+  it('never records a dependent naming a module that a --dir restriction scoped out of the result', async () => {
+    // ModuleOne's di.xml points at ModuleTwo — without --dir both are discovered and ModuleTwo gets a
+    // dependents entry naming ModuleOne (asserted above). Scoping to ONLY ModuleTwo's directory must
+    // make ModuleOne disappear entirely, including from ModuleTwo's dependents — a dangling "used by
+    // Vendor_ModuleOne" reference would otherwise get written into ModuleTwo's generated frontmatter
+    // and LLM prompt even though ModuleOne appears nowhere else in this scoped scan.
+    const { modules } = await discoverProject(makeContext({ scanDir: 'app/code/Vendor/ModuleTwo' }));
+
+    expect(modules.some((m) => m.name === 'Vendor_ModuleOne')).toBe(false);
+    const moduleTwo = modules.find((m) => m.name === 'Vendor_ModuleTwo')!;
+    const dependents = (moduleTwo.metadata?.dependents as Array<{ module: string; type: string }>) ?? [];
+    expect(dependents.every((d) => modules.some((m) => m.id === d.module))).toBe(true);
+  });
 });

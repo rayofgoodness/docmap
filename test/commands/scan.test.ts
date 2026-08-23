@@ -65,3 +65,48 @@ describe('scanCommand --json contract', () => {
     expect(Object.keys(parsed).sort()).toEqual(['framework', 'modules', 'schema_version'].sort());
   });
 });
+
+describe('scanCommand --json contract — cross-stack relations', () => {
+  const PEER_CONSUMER_ROOT = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../fixtures/nuxt4-peer-consumer-fake',
+  );
+  const PEER_BACKEND_ROOT = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../fixtures/magento2-peer-fake',
+  );
+
+  let peerScratchParent: string;
+  let peerProjectRoot: string;
+
+  beforeEach(async () => {
+    // The consumer fixture's docmap.config.json points peers at a sibling "../magento2-peer-fake" —
+    // preserve that relative layout in the scratch dir.
+    peerScratchParent = await fs.mkdtemp(path.join(os.tmpdir(), 'docmap-scan-crossstack-'));
+    peerProjectRoot = path.join(peerScratchParent, 'consumer');
+    await fs.cp(PEER_CONSUMER_ROOT, peerProjectRoot, { recursive: true });
+    await fs.cp(PEER_BACKEND_ROOT, path.join(peerScratchParent, 'magento2-peer-fake'), { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fs.rm(peerScratchParent, { recursive: true, force: true });
+  });
+
+  it('includes structured operation/toModuleName fields on a cross-stack relation, not just detail', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await scanCommand({ projectRoot: peerProjectRoot, json: true });
+    const jsonString = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    logSpy.mockRestore();
+
+    const parsed = JSON.parse(jsonString);
+    const peerRelations = parsed.modules
+      .flatMap((m: { relations: Array<{ toModule?: string }> }) => m.relations)
+      .filter((r: { toModule?: string }) => r.toModule?.startsWith('peer:'));
+
+    expect(peerRelations.length).toBeGreaterThan(0);
+    for (const rel of peerRelations) {
+      expect(typeof rel.operation).toBe('string');
+      expect(typeof rel.toModuleName).toBe('string');
+    }
+  });
+});

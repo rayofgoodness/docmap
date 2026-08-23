@@ -17,8 +17,10 @@ describe('extractRestApiCalls', () => {
 
   it('extracts a template-literal $fetch call, collapsing the interpolated prefix', () => {
     const source = 'await $fetch(`${config.magentoUrl}/V1/products/${id}`)';
-    // The interpolated ${id} segment collapses to nuxt4/relations.ts's TEMPLATE_PARAM_PLACEHOLDER sentinel ('\u0000').
-    expect(extractRestApiCalls(source)).toEqual(['V1/products/' + '\u0000']);
+    // The interpolated ${id} segment collapses to nuxt4/relations.ts's TEMPLATE_PARAM_PLACEHOLDER sentinel
+    // ('\u0001' -- a non-NUL control character, deliberately not '\u0000', which made git's
+    // binary-file heuristic flag that whole source file as binary).
+    expect(extractRestApiCalls(source)).toEqual(['V1/products/' + '\u0001']);
   });
 
   it('extracts a useFetch call the same way as $fetch', () => {

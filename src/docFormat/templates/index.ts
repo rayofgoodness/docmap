@@ -1,5 +1,6 @@
 import type { ModuleDescriptor, RelationDescriptor } from '../../adapters/types.js';
 import { buildMermaidGraph, buildUserFlows } from '../../core/relationshipGraph.js';
+import type { DependentEntry } from '../../core/discovery.js';
 
 const PEER_RELATION_PREFIX = 'peer:';
 
@@ -116,7 +117,7 @@ export function buildIndexBody(modules: ModuleDescriptor[]): string {
   const rows = modules
     .map(
       (m) =>
-        `| ${m.name} | ${m.framework} | ${m.relRootPath} | ${m.elements.length} | ${(m.metadata?.dependents as unknown[] | undefined)?.length ?? 0} |`,
+        `| ${m.name} | ${m.framework} | ${m.relRootPath} | ${m.elements.length} | ${(m.metadata?.dependents as DependentEntry[] | undefined)?.length ?? 0} |`,
     )
     .join('\n');
 

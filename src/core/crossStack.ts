@@ -36,10 +36,12 @@ export function extractRestApiCalls(source: string): string[] {
     const rawUrl = match[1] ?? match[2];
     if (!rawUrl) continue;
     const normalized = normalizeCallSiteUrlForMatch(rawUrl);
-    if (!normalized.includes('/V1/')) continue;
-    const v1Index = normalized.indexOf('V1/');
+    // Anchored on the SAME '/V1/' occurrence used to validate the URL — searching for the bare,
+    // unanchored 'V1/' here would find an earlier, spurious match (e.g. a store-code segment that
+    // happens to contain the substring 'V1/' before the real route) and slice from the wrong index.
+    const v1Index = normalized.indexOf('/V1/');
     if (v1Index === -1) continue;
-    results.push(normalized.slice(v1Index));
+    results.push(normalized.slice(v1Index + 1));
   }
   return results;
 }
@@ -75,56 +77,79 @@ interface PeerApiMatch {
 }
 
 /**
- * Matches a `V1/...`-prefixed call-site path (from extractRestApiCalls) against a peer's webapi.xml
- * route elements. A webapi.xml summaryHint looks like "METHOD /V1/some/route" — the "METHOD " prefix
- * is stripped before comparing path segments. This is a deliberate v1 simplification: matching is by
- * path segments only, regardless of HTTP method, since cheaply inferring the method from a
- * $fetch/useFetch call site (it's usually a separate `method:` option, not part of the URL) isn't
- * reliable enough to gate the match on.
+ * A peer's declared API surface, indexed once so matching a call site against it is O(1)-ish instead
+ * of a full peerModule/element/summaryHints scan per call site:
+ * - `restBySegmentCount`: webapi.xml route hints (method-stripped, leading-slash-stripped), bucketed by
+ *   path segment count — callSiteMatchesRoute requires equal segment counts, so this prunes almost all
+ *   candidates before the full segment-wise comparison.
+ * - `hintExact`: every summaryHint verbatim (REST or otherwise), for GraphQL/plain-name matching —
+ *   mirrors the original scan's behavior of matching ANY summaryHint against an operation name, not
+ *   just ones that look like REST routes.
  */
-function findPeerRestMatch(peer: PeerProject, v1Path: string): PeerApiMatch | null {
+interface PeerApiIndex {
+  restBySegmentCount: Map<number, Array<{ match: PeerApiMatch; hintPath: string }>>;
+  hintExact: Map<string, PeerApiMatch>;
+}
+
+function buildPeerApiIndex(peer: PeerProject): PeerApiIndex {
+  const restBySegmentCount = new Map<number, Array<{ match: PeerApiMatch; hintPath: string }>>();
+  const hintExact = new Map<string, PeerApiMatch>();
+
   for (const peerModule of peer.modules) {
     for (const element of peerModule.elements) {
       if (element.kind !== 'api') continue;
       for (const hint of element.summaryHints ?? []) {
+        const match: PeerApiMatch = { peerModule, element, hint };
+        if (!hintExact.has(hint)) hintExact.set(hint, match); // first occurrence wins, same as the original module-order scan
+
         const withoutMethod = hint.replace(/^\S+\s+/, '');
         const hintPath = withoutMethod.startsWith('/') ? withoutMethod.slice(1) : withoutMethod;
         if (!hintPath.startsWith('V1/')) continue; // not a webapi.xml route hint (e.g. a schema.graphqls field name) — skip
-        if (callSiteMatchesRoute(v1Path, hintPath)) {
-          return { peerModule, element, hint };
-        }
+        const segCount = hintPath.split('/').length;
+        const bucket = restBySegmentCount.get(segCount);
+        if (bucket) bucket.push({ match, hintPath });
+        else restBySegmentCount.set(segCount, [{ match, hintPath }]);
       }
     }
   }
-  return null;
-}
 
-/** Matches a GraphQL operation/field name against a peer's schema.graphqls Query/Mutation field summaryHints (exact match). */
-function findPeerGraphqlMatch(peer: PeerProject, opName: string): PeerApiMatch | null {
-  for (const peerModule of peer.modules) {
-    for (const element of peerModule.elements) {
-      if (element.kind !== 'api') continue;
-      if (element.summaryHints?.includes(opName)) {
-        return { peerModule, element, hint: opName };
-      }
-    }
-  }
-  return null;
+  return { restBySegmentCount, hintExact };
 }
 
 /**
- * Matches Nuxt consumer source (REST call sites and GraphQL operations) against a single peer
- * project's declared API surface (webapi.xml routes, schema.graphqls fields), emitting `api-call`
- * relations that cross the project boundary. The `peer:<name>::<moduleId>` prefix on toId/toModule
- * is deliberate — it must never collide with a local module id, so cross-project relations stay
- * visually and programmatically distinguishable from local ones.
+ * Matches a `V1/...`-prefixed call-site path (from extractRestApiCalls) against a peer's indexed
+ * webapi.xml route elements. This is a deliberate v1 simplification: matching is by path segments
+ * only, regardless of HTTP method, since cheaply inferring the method from a $fetch/useFetch call site
+ * (it's usually a separate `method:` option, not part of the URL) isn't reliable enough to gate on.
  */
-export async function resolveCrossStackRelations(
-  consumerModules: ModuleDescriptor[],
-  peer: PeerProject,
-): Promise<RelationDescriptor[]> {
-  const relations: RelationDescriptor[] = [];
+function matchPeerRest(index: PeerApiIndex, v1Path: string): PeerApiMatch | null {
+  const candidates = index.restBySegmentCount.get(v1Path.split('/').length);
+  if (!candidates) return null;
+  for (const { match, hintPath } of candidates) {
+    if (callSiteMatchesRoute(v1Path, hintPath)) return match;
+  }
+  return null;
+}
 
+/** Matches a GraphQL operation/field name against a peer's indexed schema.graphqls Query/Mutation field summaryHints (exact match). */
+function matchPeerGraphql(index: PeerApiIndex, opName: string): PeerApiMatch | null {
+  return index.hintExact.get(opName) ?? null;
+}
+
+export interface ConsumerCallSites {
+  fromId: string;
+  restPaths: string[];
+  graphqlOps: string[];
+}
+
+/**
+ * Reads every consumer element's source once and extracts REST/GraphQL call sites — independent of
+ * any particular peer. Callers matching against MULTIPLE peers should call this ONCE and reuse the
+ * result across every peer (via resolveCrossStackRelationsFromCallSites) rather than re-reading and
+ * re-scanning the same files once per peer.
+ */
+export async function extractConsumerCallSites(consumerModules: ModuleDescriptor[]): Promise<ConsumerCallSites[]> {
+  const results: ConsumerCallSites[] = [];
   for (const module of consumerModules) {
     for (const element of module.elements) {
       const file = element.files[0];
@@ -135,39 +160,74 @@ export async function resolveCrossStackRelations(
       } catch {
         continue;
       }
-      const fromId = `${module.id}::${element.id}`;
+      const restPaths = extractRestApiCalls(source);
+      const graphqlOps = extractGraphqlOperations(source);
+      if (restPaths.length === 0 && graphqlOps.length === 0) continue;
+      results.push({ fromId: `${module.id}::${element.id}`, restPaths, graphqlOps });
+    }
+  }
+  return results;
+}
 
-      for (const v1Path of extractRestApiCalls(source)) {
-        const restMatch = findPeerRestMatch(peer, v1Path);
-        if (!restMatch) continue;
-        relations.push({
-          type: 'api-call',
-          fromId,
-          toId: `peer:${peer.peerName}::${restMatch.peerModule.id}::${restMatch.element.id}`,
-          toModule: `peer:${peer.peerName}::${restMatch.peerModule.id}`,
-          operation: `REST ${restMatch.hint}`,
-          toModuleName: restMatch.peerModule.name,
-          detail: `REST ${restMatch.hint} -> ${restMatch.peerModule.name}`,
-          confidence: 'heuristic',
-        });
-      }
+/**
+ * Matches already-extracted consumer call sites (see extractConsumerCallSites) against a single peer's
+ * declared API surface, emitting `api-call` relations that cross the project boundary. The
+ * `peer:<name>::<moduleId>` prefix on toId/toModule is deliberate — it must never collide with a local
+ * module id, so cross-project relations stay visually and programmatically distinguishable from local
+ * ones. Pure/synchronous: all I/O already happened in extractConsumerCallSites.
+ */
+export function resolveCrossStackRelationsFromCallSites(
+  callSites: ConsumerCallSites[],
+  peer: PeerProject,
+): RelationDescriptor[] {
+  const relations: RelationDescriptor[] = [];
+  const index = buildPeerApiIndex(peer);
 
-      for (const opName of extractGraphqlOperations(source)) {
-        const graphqlMatch = findPeerGraphqlMatch(peer, opName);
-        if (!graphqlMatch) continue;
-        relations.push({
-          type: 'api-call',
-          fromId,
-          toId: `peer:${peer.peerName}::${graphqlMatch.peerModule.id}::${graphqlMatch.element.id}`,
-          toModule: `peer:${peer.peerName}::${graphqlMatch.peerModule.id}`,
-          operation: `GraphQL ${opName}`,
-          toModuleName: graphqlMatch.peerModule.name,
-          detail: `GraphQL ${opName} -> ${graphqlMatch.peerModule.name}`,
-          confidence: 'heuristic',
-        });
-      }
+  for (const { fromId, restPaths, graphqlOps } of callSites) {
+    for (const v1Path of restPaths) {
+      const restMatch = matchPeerRest(index, v1Path);
+      if (!restMatch) continue;
+      relations.push({
+        type: 'api-call',
+        fromId,
+        toId: `peer:${peer.peerName}::${restMatch.peerModule.id}::${restMatch.element.id}`,
+        toModule: `peer:${peer.peerName}::${restMatch.peerModule.id}`,
+        operation: `REST ${restMatch.hint}`,
+        toModuleName: restMatch.peerModule.name,
+        detail: `REST ${restMatch.hint} -> ${restMatch.peerModule.name}`,
+        confidence: 'heuristic',
+      });
+    }
+
+    for (const opName of graphqlOps) {
+      const graphqlMatch = matchPeerGraphql(index, opName);
+      if (!graphqlMatch) continue;
+      relations.push({
+        type: 'api-call',
+        fromId,
+        toId: `peer:${peer.peerName}::${graphqlMatch.peerModule.id}::${graphqlMatch.element.id}`,
+        toModule: `peer:${peer.peerName}::${graphqlMatch.peerModule.id}`,
+        operation: `GraphQL ${opName}`,
+        toModuleName: graphqlMatch.peerModule.name,
+        detail: `GraphQL ${opName} -> ${graphqlMatch.peerModule.name}`,
+        confidence: 'heuristic',
+      });
     }
   }
 
   return relations;
+}
+
+/**
+ * Convenience single-peer wrapper: extracts consumer call sites itself, then matches them against one
+ * peer. Prefer calling extractConsumerCallSites once and resolveCrossStackRelationsFromCallSites per
+ * peer directly when matching against MULTIPLE peers, to avoid re-reading/re-extracting the same
+ * consumer files once per peer.
+ */
+export async function resolveCrossStackRelations(
+  consumerModules: ModuleDescriptor[],
+  peer: PeerProject,
+): Promise<RelationDescriptor[]> {
+  const callSites = await extractConsumerCallSites(consumerModules);
+  return resolveCrossStackRelationsFromCallSites(callSites, peer);
 }

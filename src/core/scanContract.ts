@@ -38,6 +38,13 @@ export interface ScanContractRelationV1 {
   fromId: string;
   toId: string;
   toModule?: string;
+  /** Structured endpoint/operation name (e.g. "REST GET /V1/carts/mine", "GraphQL GetCart") for a
+   * cross-stack api-call relation — present so a consumer doesn't have to re-parse `detail`. */
+  operation?: string;
+  /** Structured display name of the relation's target module — present for the same reason as
+   * `operation`; most useful for a peer `toModule` (`peer:<name>::<id>`), whose id alone isn't a
+   * readable name. */
+  toModuleName?: string;
   detail?: string;
   confidence: string;
 }
@@ -48,6 +55,8 @@ function toContractRelation(relation: RelationDescriptor): ScanContractRelationV
     fromId: relation.fromId,
     toId: relation.toId,
     ...(relation.toModule !== undefined ? { toModule: relation.toModule } : {}),
+    ...(relation.operation !== undefined ? { operation: relation.operation } : {}),
+    ...(relation.toModuleName !== undefined ? { toModuleName: relation.toModuleName } : {}),
     ...(relation.detail !== undefined ? { detail: relation.detail } : {}),
     confidence: relation.confidence,
   };

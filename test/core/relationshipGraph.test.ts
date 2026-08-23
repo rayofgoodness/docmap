@@ -117,6 +117,43 @@ describe('buildMermaidGraph', () => {
       }
     }
   });
+
+  it('renders a cross-stack peer relation as a synthetic node instead of silently dropping it', () => {
+    const relation = makeRelation({
+      fromId: 'pages::CartPage',
+      toId: 'peer:backend::vendor_sales::etc/webapi.xml',
+      toModule: 'peer:backend::vendor_sales',
+      toModuleName: 'Vendor_Sales',
+      type: 'api-call',
+      confidence: 'heuristic',
+      detail: 'REST GET /V1/carts/mine -> Vendor_Sales',
+    });
+    const modules: ModuleDescriptor[] = [makeModule({ id: 'pages', name: 'Pages', relations: [relation] })];
+
+    const result = buildMermaidGraph(modules);
+
+    // The peer has no local module object, so it must be declared as its own node (labeled from
+    // toModuleName, not the raw unreadable peer:<name>::<id> string) with a dashed edge to it.
+    expect(result.diagram).toContain('["Vendor_Sales"]');
+    expect(result.diagram).toMatch(/pages -\.->\|api-call\| \S*peer\S*/);
+    expect(result.totalEdges).toBe(1);
+    expect(result.shownEdges).toBe(1);
+  });
+
+  it('labels a peer node from the raw peer id when toModuleName is absent', () => {
+    const relation = makeRelation({
+      fromId: 'pages::CartPage',
+      toId: 'peer:backend::vendor_sales',
+      toModule: 'peer:backend::vendor_sales',
+      type: 'api-call',
+      confidence: 'heuristic',
+    });
+    const modules: ModuleDescriptor[] = [makeModule({ id: 'pages', name: 'Pages', relations: [relation] })];
+
+    const result = buildMermaidGraph(modules);
+
+    expect(result.diagram).toContain('["backend::vendor_sales"]');
+  });
 });
 
 describe('buildUserFlows', () => {

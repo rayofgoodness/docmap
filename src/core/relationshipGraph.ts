@@ -18,7 +18,12 @@ interface Edge {
   to: string;
   type: string;
   confidence: RelationConfidence;
+  /** Display label for `to` when it's a peer node (`peer:<name>::<moduleId>`) — the id itself isn't
+   * readable, so the diagram needs the relation's own toModuleName to label the synthetic peer node. */
+  toLabel?: string;
 }
+
+const PEER_TARGET_PREFIX = 'peer:';
 
 export interface MermaidGraphResult {
   /** The `graph LR ...` mermaid source (no surrounding ``` fence). */
@@ -72,11 +77,22 @@ export function buildMermaidGraph(modules: ModuleDescriptor[]): MermaidGraphResu
   for (const module of modules) {
     for (const rel of module.relations) {
       const target = rel.toModule;
-      if (!target || !moduleIds.has(target) || target === module.id) continue;
+      if (!target || target === module.id) continue;
+      const isPeer = target.startsWith(PEER_TARGET_PREFIX);
+      // A peer target has no local module object (it's a sibling project, scanned read-only), so it's
+      // never in `moduleIds` — that must not exclude it the way an unrelated/unknown local id would;
+      // it gets a synthetic node instead, labeled from the relation's own toModuleName.
+      if (!isPeer && !moduleIds.has(target)) continue;
       const edgeKey = `${module.id}->${target}:${rel.type}`;
       if (seenEdges.has(edgeKey)) continue;
       seenEdges.add(edgeKey);
-      edges.push({ from: module.id, to: target, type: rel.type, confidence: rel.confidence });
+      edges.push({
+        from: module.id,
+        to: target,
+        type: rel.type,
+        confidence: rel.confidence,
+        toLabel: isPeer ? (rel.toModuleName ?? target.slice(PEER_TARGET_PREFIX.length)) : undefined,
+      });
     }
   }
 
@@ -87,6 +103,15 @@ export function buildMermaidGraph(modules: ModuleDescriptor[]): MermaidGraphResu
   const lines = ['graph LR'];
   for (const module of modules) {
     lines.push(`  ${mermaidId(module.id)}["${module.name}"]`);
+  }
+  // Peer nodes are declared only for peer targets that actually survive into the rendered (possibly
+  // truncated) edge set, so a capped diagram never declares a node with no visible edge to it.
+  const declaredPeerNodes = new Set<string>();
+  for (const edge of diagramEdges) {
+    if (edge.toLabel !== undefined && !declaredPeerNodes.has(edge.to)) {
+      declaredPeerNodes.add(edge.to);
+      lines.push(`  ${mermaidId(edge.to)}["${edge.toLabel}"]`);
+    }
   }
   for (const edge of diagramEdges) {
     const arrow = edge.confidence === 'heuristic' ? '-.->' : '-->';

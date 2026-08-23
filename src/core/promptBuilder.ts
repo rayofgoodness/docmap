@@ -3,6 +3,7 @@ import type { ElementDescriptor, ModuleDescriptor, RelationDescriptor, SourceFil
 import type { ResolvedDocmapConfig } from '../config/schema.js';
 import { BODY_END, BODY_START, ELEMENT_END, elementStartMarker } from './markers.js';
 import { getSectionLabels } from '../utils/lang.js';
+import type { DependentEntry } from './discovery.js';
 
 export async function readExcerpt(absPath: string, maxBytes: number): Promise<string> {
   try {
@@ -94,7 +95,7 @@ function buildRelationSummary(relations: RelationDescriptor[]): string {
  * computed — leaving "Relationships" sections one-directional even when other modules point back
  * at this one. */
 function buildUsedBySummary(module: ModuleDescriptor): string {
-  const dependents = (module.metadata?.dependents as Array<{ module: string; type: string }> | undefined) ?? [];
+  const dependents = (module.metadata?.dependents as DependentEntry[] | undefined) ?? [];
   if (dependents.length === 0) return 'Used by: (not used by any other scanned module)';
   const names = dependents.map((d) => `${d.module} (${d.type})`).join(', ');
   return `Used by ${dependents.length} other module(s): ${names}`;

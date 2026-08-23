@@ -141,6 +141,41 @@ share outside the machine it was generated on and stable across
 checkouts at different locations. Treat `relPath`-style paths as
 relative to the project root you ran `docmap scan` from.
 
+### Cross-stack peers
+
+For a split-repo setup (e.g. a Nuxt frontend calling a separate Magento
+backend), configure `peers` in `docmap.config.json` to match this
+project's REST/GraphQL call sites against a sibling project's declared
+API surface (`etc/webapi.xml` routes, `etc/schema.graphqls` fields):
+
+```jsonc
+{
+  "peers": [
+    { "name": "backend", "path": "../eva-magento" }
+  ]
+}
+```
+
+Each peer is discovered **read-only**: docmap scans the peer project to
+learn its modules and API surface, but never calls `resolveRelations` on
+it and never generates docs for it — the peer's own internal relations
+and its `dependents`/used-by index are not populated, only its
+module/element/`summaryHints` shape is used for matching. If you want
+the peer's own full docmap output (its internal relations, its own
+used-by index), run `docmap generate` on that project directly.
+
+A matched call site becomes a cross-project `api-call` relation, tagged
+`peer:<name>::<moduleId>` on `toId`/`toModule` so it's never confused
+with a local module id. These show up in:
+
+- `docmap scan --json`'s `relations[]`, with `toModule` peer-prefixed.
+- The `## Relationships` mermaid diagram in `index.md` (dashed, since
+  the match is heuristic), with the peer module rendered as its own node.
+- The `## Integration surface` table in `index.md` — endpoint/operation
+  → frontend consumer → backend owner, for regression-testing "what
+  breaks if this backend module changes."
+- `## Scenarios` end-to-end chains that cross into a peer backend.
+
 ### `docmap generate`
 
 The full pipeline: discovery, then one AI agent call per module (not per
@@ -341,6 +376,7 @@ the way to check that case.
 | `timeoutMs` | `600000`                                             | Per-agent-call timeout |
 | `elementDocThreshold` | `1`                                                  | Modules with this many elements or fewer get their docs folded into the module README instead of separate files |
 | `historyKeep` | `5`                                                  | Previous-version snapshots kept per module under `.docmap/.history/` before each overwrite; `0` disables history |
+| `peers` | `[]`                                                  | Sibling projects to match cross-stack API calls against — see [Cross-stack peers](#cross-stack-peers) |
 
 ## Using it from an agent
 
