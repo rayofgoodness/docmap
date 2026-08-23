@@ -89,6 +89,7 @@ program
   .option('--framework <framework>', 'force a framework adapter')
   .option('--skill <path>', 'markdown/SKILL.md file with project-specific documentation instructions')
   .option('--since <ref>', 'focus each stale module\'s prompt on the diff against this git ref')
+  .option('--against <path>', 'verify against a specific historical doc version instead of the current one')
   .action(async (opts) => {
     await verifyCommand({
       projectRoot: process.cwd(),
@@ -100,6 +101,7 @@ program
       framework: opts.framework,
       skill: opts.skill,
       since: opts.since,
+      against: opts.against,
     });
   });
 

@@ -3,7 +3,8 @@ import path from 'node:path';
 import { execa } from 'execa';
 import type { DiscoveryContext, ModuleDescriptor } from '../adapters/types.js';
 import type { ResolvedDocmapConfig } from '../config/schema.js';
-import type { ModuleFrontmatter } from '../docFormat/frontmatter.js';
+import { ModuleFrontmatterSchema, type ModuleFrontmatter } from '../docFormat/frontmatter.js';
+import { tryParseDoc } from '../docFormat/parse.js';
 import type { RunnerName } from '../types.js';
 import type { Logger } from '../utils/logger.js';
 import { loadSkillInstructions } from '../utils/skillInstructions.js';
@@ -363,6 +364,45 @@ export interface VerifyOptions {
    * of) the full current-source excerpts. When git itself is unavailable or projectRoot isn't a git repo,
    * this is silently downgraded to full-module verification (a warning is logged, nothing throws). */
   sinceRef?: string;
+  /** Compares against a specific historical doc version instead of the current on-disk doc — e.g. a
+   * `.docmap/.history/<module>/<generated_at>.md` snapshot. When set, every target module is verified
+   * against this SAME baseline (the "unchanged since last generate" shortcut is skipped, since a
+   * user-requested baseline must always be checked). Resolution failure throws rather than silently
+   * falling back to the current doc. */
+  against?: string;
+}
+
+/**
+ * Resolves the `--against <path>` baseline for verify: a specific historical doc (typically under
+ * `.docmap/.history/<module>/<generated_at>.md`) to compare against instead of the current on-disk doc.
+ * - A path starting with `.history/` (or `./.history/`) is resolved under `.docmap/`.
+ * - Any other path is treated as absolute, or relative to `projectRoot`, and read as-is.
+ * Throws a clear, path-naming error on a missing or unparsable file — the user asked for a specific
+ * baseline, so silently falling back to the current doc would be misleading.
+ */
+export async function resolveAgainstDoc(
+  projectRoot: string,
+  against: string,
+): Promise<{ frontmatter: ModuleFrontmatter; body: string }> {
+  const resolvedPath =
+    against.startsWith('.history/') || against.startsWith('./.history/')
+      ? path.join(getDocmapRoot(projectRoot), against)
+      : path.isAbsolute(against)
+        ? against
+        : path.resolve(projectRoot, against);
+
+  let raw: string;
+  try {
+    raw = await fs.readFile(resolvedPath, 'utf8');
+  } catch {
+    throw new Error(`--against baseline not found: "${resolvedPath}"`);
+  }
+
+  const parsed = tryParseDoc(ModuleFrontmatterSchema, raw);
+  if (!parsed) {
+    throw new Error(`--against baseline at "${resolvedPath}" could not be parsed as a module doc`);
+  }
+  return parsed;
 }
 
 /** Project-wide `--since` context resolved once per `runVerify` call and handed to every module, so a
@@ -431,6 +471,7 @@ export async function runVerify(options: VerifyOptions): Promise<VerifySummary> 
   const instructions = config.skill ? await loadSkillInstructions(projectRoot, config.skill, logger) : undefined;
 
   const since = options.sinceRef ? await resolveSinceContext(options.sinceRef, projectRoot, logger) : null;
+  const against = options.against ? await resolveAgainstDoc(projectRoot, options.against) : undefined;
 
   const limit = createConcurrencyLimiter(config.concurrency);
   const reports: VerifyModuleReport[] = [];
@@ -455,6 +496,7 @@ export async function runVerify(options: VerifyOptions): Promise<VerifySummary> 
               instructions,
               progress,
               since: since ?? undefined,
+              against,
             });
             reports.push(report);
           } catch (err) {
@@ -486,17 +528,21 @@ export async function verifyModule(args: {
   instructions?: string;
   progress?: ProgressTracker;
   since?: SinceContext;
+  /** A specific historical doc to use as the baseline instead of the current on-disk doc (from
+   * `--against`). When set, the "unchanged since last generate" shortcut is skipped — a user-requested
+   * baseline must always be checked against current source, regardless of the current doc's fingerprint. */
+  against?: { frontmatter: ModuleFrontmatter; body: string };
 }): Promise<VerifyModuleReport> {
-  const { module, projectRoot, config, logger, runner, instructions, progress, since } = args;
+  const { module, projectRoot, config, logger, runner, instructions, progress, since, against } = args;
 
-  const oldDoc = await readModuleDoc(projectRoot, module);
+  const oldDoc = against ?? (await readModuleDoc(projectRoot, module));
   if (!oldDoc) {
     logger.info(`[skip] ${module.id} — no existing doc, nothing to verify`);
     return { moduleId: module.id, name: module.name, status: 'missing' };
   }
 
   const fingerprint = await computeModuleFingerprint(module);
-  if (oldDoc.frontmatter.fingerprint === fingerprint) {
+  if (!against && oldDoc.frontmatter.fingerprint === fingerprint) {
     // KNOWN LIMITATION (v1): with --since, a module whose fingerprint already matches its doc is still
     // treated as unchanged even if --since's diff touched it — the doc may already have silently adopted
     // a regression as its new baseline (generate ran again after the change before verify ever caught

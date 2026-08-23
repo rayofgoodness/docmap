@@ -219,6 +219,7 @@ in CI or for previewing the module tree.
 | `maxRetries` | `1`                                                  | Retries when the agent's output is missing the required markers |
 | `timeoutMs` | `600000`                                             | Per-agent-call timeout |
 | `elementDocThreshold` | `1`                                                  | Modules with this many elements or fewer get their docs folded into the module README instead of separate files |
+| `historyKeep` | `5`                                                  | Previous-version snapshots kept per module under `.docmap/.history/` before each overwrite; `0` disables history |
 
 ## Using it from an agent
 

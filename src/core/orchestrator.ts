@@ -20,6 +20,7 @@ import { buildIndexBody } from '../docFormat/templates/index.js';
 import {
   getDocmapRoot,
   readModuleDoc,
+  snapshotModuleDocHistory,
   writeElementDoc,
   writeIndexDoc,
   writeModuleDoc,
@@ -353,6 +354,7 @@ async function writeModule(args: {
     tags: [],
   };
 
+  await snapshotModuleDocHistory(projectRoot, module, config.historyKeep);
   await writeModuleDoc(projectRoot, module, moduleFrontmatter, body);
 
   if (!foldElements) {
