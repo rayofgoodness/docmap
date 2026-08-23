@@ -24,6 +24,7 @@ export const ModuleFrontmatterSchema = z.object({
   generated_at: z.string(),
   generated_by: GeneratedBySchema,
   elements: z.array(z.object({ id: z.string(), path: z.string() })).default([]),
+  invariants: z.array(z.object({ id: z.string(), text: z.string() })).default([]),
   dependencies: z
     .array(
       z.object({

@@ -34,6 +34,7 @@ function frontmatter(overrides: Partial<ModuleFrontmatter> = {}): ModuleFrontmat
     generated_at: '2026-08-20T00:00:00.000Z',
     generated_by: { runner: 'mock' },
     elements: [],
+    invariants: [],
     dependencies: [],
     tags: [],
     ...overrides,

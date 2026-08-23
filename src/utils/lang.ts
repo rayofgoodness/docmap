@@ -2,6 +2,7 @@ export interface SectionLabels {
   purpose: string;
   responsibilities: string;
   businessLogic: string;
+  invariants: string;
   inputsOutputs: string;
   relationships: string;
 }
@@ -11,6 +12,7 @@ const CATALOG: Record<string, SectionLabels> = {
     purpose: 'Purpose',
     responsibilities: 'Responsibilities',
     businessLogic: 'Business Logic',
+    invariants: 'Invariants',
     inputsOutputs: 'Inputs / Outputs',
     relationships: 'Relationships',
   },
@@ -18,6 +20,7 @@ const CATALOG: Record<string, SectionLabels> = {
     purpose: 'Призначення',
     responsibilities: 'Відповідальність',
     businessLogic: 'Бізнес-логіка',
+    invariants: 'Інваріанти',
     inputsOutputs: 'Входи / Виходи',
     relationships: 'Звʼязки',
   },

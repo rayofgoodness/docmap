@@ -123,11 +123,19 @@ export async function buildModulePrompt(
     'Base everything on the actual source excerpts — never invent fields that are not in the code. If an element\'s source was not included in the excerpts, write only what the relations reveal and mark it "(source not shown)" translated into the documentation language.',
   ].join('\n');
 
+  const invariantsGuidance = [
+    'The "## Invariants" section of the module overview block must be a NUMBERED markdown list (1. , 2. , ...).',
+    'Each item is a single, concrete, verifiable business rule stated as a testable claim, e.g. "An order can only be cancelled while its status is pending or on-hold" or "A discount never exceeds 50% of the item price".',
+    'Ground every item strictly in what the source code actually does — never invent a rule that is not visibly enforced by the code.',
+    'Never write a vague item like "the system validates input" — name the actual rule and its boundary condition.',
+  ].join('\n');
+
   const outputContract = batch.includeBody
     ? [
-        `1. One module overview block: ${BODY_START}\\n## Purpose\\n...\\n## Responsibilities\\n...\\n## Business Logic\\n...\\n## Inputs / Outputs\\n...\\n## Relationships\\n...\\n${BODY_END}`,
+        `1. One module overview block: ${BODY_START}\\n## Purpose\\n...\\n## Responsibilities\\n...\\n## Business Logic\\n...\\n## Invariants\\n...\\n## Inputs / Outputs\\n...\\n## Relationships\\n...\\n${BODY_END}`,
         `2. One block per element listed above: ${elementStartMarker('<element id>')}\\n...\\n${ELEMENT_END}`,
         elementTemplate,
+        invariantsGuidance,
       ]
     : [
         `Respond with ONLY one block per element listed above — this batch does not need a module overview block (already written from an earlier batch): ${elementStartMarker('<element id>')}\\n...\\n${ELEMENT_END}`,

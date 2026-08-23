@@ -14,6 +14,7 @@ import { createConcurrencyLimiter } from './concurrency.js';
 import { formatDuration, ProgressTracker } from './progress.js';
 import { getRunner } from '../runners/registry.js';
 import { buildModulePlaceholderBody } from '../docFormat/templates/moduleRoot.js';
+import { parseInvariantsSection } from '../docFormat/invariants.js';
 import { buildElementPlaceholderBody } from '../docFormat/templates/element.js';
 import { buildIndexBody } from '../docFormat/templates/index.js';
 import {
@@ -324,6 +325,14 @@ async function writeModule(args: {
   const generatedAt = new Date().toISOString();
   const foldElements = module.elements.length <= config.elementDocThreshold;
 
+  let body = parsed.body ?? buildModulePlaceholderBody(getSectionLabels(config.language));
+  if (foldElements && module.elements.length > 0) {
+    const foldedSections = module.elements
+      .map((e) => `### ${e.name}\n${parsed.elements[e.id] ?? '_Pending generation._'}`)
+      .join('\n\n');
+    body = `${body}\n\n## Elements\n\n${foldedSections}`;
+  }
+
   const moduleFrontmatter: ModuleFrontmatter = {
     docmap_version: 1,
     kind: 'module',
@@ -337,19 +346,12 @@ async function writeModule(args: {
     generated_at: generatedAt,
     generated_by: { runner: runnerName, model: config.model },
     elements: foldElements ? [] : module.elements.map((e) => ({ id: e.id, path: `${e.id}.md` })),
+    invariants: parseInvariantsSection(body, getSectionLabels(config.language).invariants),
     dependencies: module.relations
       .filter((r) => r.toModule)
       .map((r) => ({ module: r.toModule as string, type: r.type, detail: r.detail })),
     tags: [],
   };
-
-  let body = parsed.body ?? buildModulePlaceholderBody(getSectionLabels(config.language));
-  if (foldElements && module.elements.length > 0) {
-    const foldedSections = module.elements
-      .map((e) => `### ${e.name}\n${parsed.elements[e.id] ?? '_Pending generation._'}`)
-      .join('\n\n');
-    body = `${body}\n\n## Elements\n\n${foldedSections}`;
-  }
 
   await writeModuleDoc(projectRoot, module, moduleFrontmatter, body);
 
