@@ -40,7 +40,7 @@ describe('nuxt4Adapter', () => {
     const pages = modules.find((m) => m.id === 'pages')!;
 
     const types = pages.relations.map((r) => `${r.type}->${r.toModule}`).sort();
-    expect(types).toEqual(['api-call->server', 'import->components', 'import->composables', 'unknown->stores']);
+    expect(types).toEqual(['api-call->server', 'import->components', 'import->composables', 'store->stores']);
 
     const apiCall = pages.relations.find((r) => r.type === 'api-call');
     expect(apiCall?.detail).toBe('/api/cart');
@@ -62,7 +62,7 @@ describe('nuxt4Adapter', () => {
     // so the call site is the only signal available and dedup must not suppress it.
     const { modules } = await discoverProject(makeContext());
     const pages = modules.find((m) => m.id === 'pages')!;
-    const storeRelation = pages.relations.find((r) => r.toModule === 'stores' && r.type === 'unknown');
+    const storeRelation = pages.relations.find((r) => r.toModule === 'stores' && r.type === 'store');
     expect(storeRelation).toMatchObject({ detail: 'useCartStore()', confidence: 'heuristic' });
   });
 });

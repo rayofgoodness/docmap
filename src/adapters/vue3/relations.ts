@@ -138,7 +138,7 @@ export async function resolveVue3Relations(
           const storeFile = storesModule.elements.find((e) => e.id === storeElementId)?.files[0];
           if (storeFile && importedAbsPaths.has(stripExt(storeFile.absPath))) continue;
           relations.push({
-            type: 'unknown',
+            type: 'store',
             fromId,
             toId: `stores::${storeElementId}`,
             toModule: 'stores',

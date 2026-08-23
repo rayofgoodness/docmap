@@ -45,6 +45,7 @@ export type RelationType =
   | 'extends'
   | 'plugin-intercepts'
   | 'route'
+  | 'store'
   | 'unknown';
 
 export type RelationConfidence = 'deterministic' | 'heuristic';

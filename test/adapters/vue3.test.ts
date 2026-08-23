@@ -55,7 +55,7 @@ describe('vue3Adapter', () => {
   it('still records a store-call relation when the store has no explicit import (auto-import)', async () => {
     const { modules } = await discoverProject(makeContext());
     const views = modules.find((m) => m.id === 'views')!;
-    const storeRelation = views.relations.find((r) => r.toModule === 'stores' && r.type === 'unknown');
+    const storeRelation = views.relations.find((r) => r.toModule === 'stores' && r.type === 'store');
     expect(storeRelation).toMatchObject({ detail: 'useCartStore()', confidence: 'heuristic' });
   });
 

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 const RelationTypeSchema = z.enum([
-  'di', 'event', 'import', 'api-call', 'extends', 'plugin-intercepts', 'route', 'unknown',
+  'di', 'event', 'import', 'api-call', 'extends', 'plugin-intercepts', 'route', 'store', 'unknown',
 ]);
 
 const StatusSchema = z.enum(['planned', 'implemented', 'partial']);
