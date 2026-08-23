@@ -4,11 +4,11 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { verifyModule, writeVerifyReport, VERIFY_END, VERIFY_START, type VerifyModuleReport } from '../../src/core/verify.js';
 import { genericAdapter } from '../../src/adapters/generic/index.js';
-import { writeModuleDoc } from '../../src/core/docWriter.js';
+import { writeBriefDoc, writeModuleDoc } from '../../src/core/docWriter.js';
 import { computeModuleFingerprint } from '../../src/core/fingerprint.js';
 import { getDefaultConfig } from '../../src/config/defaults.js';
 import { createLogger } from '../../src/utils/logger.js';
-import type { ModuleFrontmatter } from '../../src/docFormat/frontmatter.js';
+import type { BriefFrontmatter, ModuleFrontmatter } from '../../src/docFormat/frontmatter.js';
 import type { AgentRunner, RunnerInvocation, RunnerResult } from '../../src/runners/types.js';
 import type { DiscoveryContext, ModuleDescriptor } from '../../src/adapters/types.js';
 
@@ -180,19 +180,63 @@ describe('verifyModule', () => {
   });
 });
 
+function fakeModule(id: string, relRootPath: string): ModuleDescriptor {
+  return {
+    id,
+    name: id,
+    rootPath: path.join(tmpDir, relRootPath),
+    relRootPath,
+    framework: 'generic',
+    elements: [],
+    relations: [],
+    files: [],
+  };
+}
+
+function briefFrontmatter(moduleId: string): BriefFrontmatter {
+  return {
+    docmap_version: 1,
+    kind: 'brief',
+    module: moduleId,
+    language: 'en',
+    source_fingerprint: 'sha256:whatever',
+    generated_at: '2026-01-01T00:00:00.000Z',
+    generated_by: { runner: 'mock' },
+  };
+}
+
+const checkoutBriefBody = [
+  '## What this module does',
+  'Checkout finalizes a customer order once payment succeeds.',
+  '',
+  '## Key scenarios',
+  '- A customer pays for their cart and the order is finalized.',
+  '',
+  '## Business rules',
+  'I1: An order can only be marked paid once the payment processor confirms the charge.',
+  '',
+  '## What to check after changes',
+  'I1: Pay for an order and confirm it only moves to paid after the payment processor confirms success.',
+  '',
+  '## Dependency risks',
+  '- (no other modules currently depend on this one)',
+].join('\n');
+
+const breakingCheckoutReport: VerifyModuleReport = {
+  moduleId: 'checkout',
+  name: 'checkout',
+  status: 'verified',
+  verdict: 'BREAKING',
+  invariants: [{ id: 'I1', verdict: 'VIOLATED', note: 'no longer enforced.' }],
+  undocumented: ['New auto-refund path.'],
+};
+
 describe('writeVerifyReport', () => {
   it('writes a timestamped markdown report with a summary table and CHANGED/BREAKING details', async () => {
     const reports: VerifyModuleReport[] = [
       { moduleId: 'orders', name: 'orders', status: 'unchanged' },
       { moduleId: 'cart', name: 'cart', status: 'missing' },
-      {
-        moduleId: 'checkout',
-        name: 'checkout',
-        status: 'verified',
-        verdict: 'BREAKING',
-        invariants: [{ id: 'I1', verdict: 'VIOLATED', note: 'no longer enforced.' }],
-        undocumented: ['New auto-refund path.'],
-      },
+      breakingCheckoutReport,
     ];
 
     const filePath = await writeVerifyReport(tmpDir, reports, new Date(2026, 0, 15, 9, 5));
@@ -200,6 +244,47 @@ describe('writeVerifyReport', () => {
     expect(filePath).toBe(path.join(tmpDir, '.docmap', '.reports', 'verify-2026-01-15-0905.md'));
     const content = await fs.readFile(filePath, 'utf8');
     expect(content).toContain('| orders (orders) | unchanged | - |');
+    expect(content).toContain('| checkout (checkout) | verified | BREAKING |');
+    expect(content).toContain('### checkout (checkout) — BREAKING');
+    expect(content).toContain('I1: VIOLATED — no longer enforced.');
+    expect(content).toContain('New auto-refund path.');
+  });
+
+  it('adds a "### For managers" subsection, reusing the brief\'s plain-language text, when a matching brief exists on disk', async () => {
+    const module = fakeModule('checkout', 'checkout');
+    await writeBriefDoc(tmpDir, module, briefFrontmatter('checkout'), checkoutBriefBody);
+
+    const reports: VerifyModuleReport[] = [breakingCheckoutReport];
+    const filePath = await writeVerifyReport(tmpDir, reports, new Date(2026, 0, 15, 9, 6), [module]);
+    const content = await fs.readFile(filePath, 'utf8');
+
+    // Existing iteration-2 technical content is completely unaffected.
+    expect(content).toContain('| checkout (checkout) | verified | BREAKING |');
+    expect(content).toContain('### checkout (checkout) — BREAKING');
+    expect(content).toContain('I1: VIOLATED — no longer enforced.');
+    expect(content).toContain('New auto-refund path.');
+
+    // New plain-language enrichment, reusing the brief's own wording rather than a fresh LLM call.
+    expect(content).toContain('### For managers');
+    expect(content).toContain(
+      'I1: An order can only be marked paid once the payment processor confirms the charge.',
+    );
+    expect(content).toContain(
+      'what this means: this behavior may no longer work as expected — verify by: Pay for an order and confirm it only moves to paid after the payment processor confirms success.',
+    );
+  });
+
+  it('omits the "### For managers" subsection (without erroring) when no brief exists on disk for the module', async () => {
+    const module = fakeModule('checkout', 'checkout');
+    // Deliberately no writeBriefDoc call — no brief on disk for this module.
+
+    const reports: VerifyModuleReport[] = [breakingCheckoutReport];
+    const filePath = await writeVerifyReport(tmpDir, reports, new Date(2026, 0, 15, 9, 7), [module]);
+    const content = await fs.readFile(filePath, 'utf8');
+
+    expect(content).not.toContain('For managers');
+
+    // Existing iteration-2 technical content is still completely unaffected.
     expect(content).toContain('| checkout (checkout) | verified | BREAKING |');
     expect(content).toContain('### checkout (checkout) — BREAKING');
     expect(content).toContain('I1: VIOLATED — no longer enforced.');

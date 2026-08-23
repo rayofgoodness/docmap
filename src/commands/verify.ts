@@ -28,7 +28,7 @@ export async function verifyCommand(options: VerifyOptions): Promise<void> {
     },
   });
 
-  const { frameworkName, reports } = await runVerify({
+  const { frameworkName, reports, modules } = await runVerify({
     projectRoot: options.projectRoot,
     config,
     logger,
@@ -40,7 +40,7 @@ export async function verifyCommand(options: VerifyOptions): Promise<void> {
   });
 
   // Both --json and human mode produce the .md report — --json only changes what's printed to stdout.
-  const reportPath = await writeVerifyReport(options.projectRoot, reports, new Date());
+  const reportPath = await writeVerifyReport(options.projectRoot, reports, new Date(), modules);
 
   if (options.json) {
     console.log(JSON.stringify(reports, null, 2));

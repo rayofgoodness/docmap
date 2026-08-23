@@ -14,9 +14,10 @@ import { collectFiles, readExcerpt } from './promptBuilder.js';
 import { createConcurrencyLimiter } from './concurrency.js';
 import { formatDuration, ProgressTracker } from './progress.js';
 import { getRunner } from '../runners/registry.js';
-import { getDocmapRoot, readModuleDoc } from './docWriter.js';
+import { getDocmapRoot, readBriefDoc, readModuleDoc } from './docWriter.js';
 import { describeBatchFailure, isLikelyTimeout } from './orchestrator.js';
 import type { AgentRunner, RunnerResult } from '../runners/types.js';
+import { getSectionLabels } from '../utils/lang.js';
 
 /**
  * Marker vocabulary for `docmap verify`. Deliberately distinct from markers.ts's generate markers —
@@ -440,6 +441,10 @@ export async function resolveSinceContext(
 export interface VerifySummary {
   frameworkName: string;
   reports: VerifyModuleReport[];
+  /** The modules verify actually targeted this run — carried alongside `reports` (never inside it) so
+   * that report-writing code can resolve a report's `moduleId` back to a `relRootPath` for `readBriefDoc`
+   * without changing `VerifyModuleReport`'s own shape, which is what `--json` serializes. */
+  modules: ModuleDescriptor[];
 }
 
 export async function runVerify(options: VerifyOptions): Promise<VerifySummary> {
@@ -516,7 +521,7 @@ export async function runVerify(options: VerifyOptions): Promise<VerifySummary> 
     progress.stop();
   }
 
-  return { frameworkName, reports };
+  return { frameworkName, reports, modules: targetModules };
 }
 
 export async function verifyModule(args: {
@@ -585,6 +590,75 @@ export async function verifyModule(args: {
   };
 }
 
+// e.g. "I1: Cancellation is only allowed while an order is pending or on-hold." — brief.ts's own
+// contract for its "## <briefBusinessRules>" / "## <briefWhatToCheck>" sections (buildBriefPrompt's
+// businessRulesContract/whatToCheckContract lines are "<id>: <text>", no leading bullet), keyed by the
+// same "I1", "I2", ... ids invariants.ts assigns. The leading "-" is optional, tolerating a model that
+// bullets the line anyway. Not a general parser: it only needs to understand this one line shape.
+const BRIEF_ID_LINE = /^-?\s*(I\d+):\s*(.+)$/;
+
+/** Extracts "I<n>: <text>" lines directly beneath a "## <heading>" line in a brief body, keyed by
+ * invariant id — same "find the heading, collect until the next '## '" shape as extractSection above and
+ * invariants.ts's parseInvariantsSection, just matched against brief.ts's own line format. Returns an
+ * empty map when the heading is absent (a brief predating this section, or a heading/label mismatch). */
+function parseBriefIdSection(body: string, heading: string): Map<string, string> {
+  const lines = body.split('\n');
+  const target = `## ${heading}`;
+  const startIndex = lines.findIndex((line) => line.trim() === target);
+  const result = new Map<string, string>();
+  if (startIndex === -1) return result;
+
+  for (let i = startIndex + 1; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.trim().startsWith('## ')) break;
+    const match = BRIEF_ID_LINE.exec(line.trim());
+    if (match) result.set(match[1]!, match[2]!.trim());
+  }
+  return result;
+}
+
+/**
+ * Builds the "### For managers" lines for one CHANGED/BREAKING module report, by reusing the plain-
+ * language text a brief (iteration 3.1) already carries for this module — no fresh LLM call. Returns
+ * null (never throws) when there's nothing sensible to show:
+ * - no brief exists on disk for this module (readBriefDoc returns null) — per the plan this enrichment
+ *   is optional, so the whole subsection is skipped rather than treated as an error;
+ * - none of this report's invariants came back CHANGED/VIOLATED (nothing needs surfacing to a manager);
+ * - the brief exists but every CHANGED/VIOLATED id it should cover is missing from its Business Rules /
+ *   What to Check sections (predates the invariant, or ids drifted) — each such id is skipped
+ *   individually rather than erroring, and if that leaves nothing, the whole subsection is skipped too.
+ */
+async function buildForManagersLines(
+  projectRoot: string,
+  report: VerifyModuleReport,
+  relRootPath: string | undefined,
+): Promise<string[] | null> {
+  if (!relRootPath) return null;
+
+  const notable = (report.invariants ?? []).filter(
+    (inv) => inv.verdict === 'CHANGED' || inv.verdict === 'VIOLATED',
+  );
+  if (notable.length === 0) return null;
+
+  const brief = await readBriefDoc(projectRoot, { relRootPath });
+  if (!brief) return null;
+
+  const labels = getSectionLabels(brief.frontmatter.language);
+  const businessRules = parseBriefIdSection(brief.body, labels.briefBusinessRules);
+  const whatToCheck = parseBriefIdSection(brief.body, labels.briefWhatToCheck);
+
+  const lines: string[] = [];
+  for (const inv of notable) {
+    const ruleText = businessRules.get(inv.id);
+    const checkText = whatToCheck.get(inv.id);
+    if (!ruleText || !checkText) continue; // brief predates this invariant, or ids drifted — skip just this id
+    lines.push(`- ${inv.id}: ${ruleText}`);
+    lines.push(`  what this means: this behavior may no longer work as expected — verify by: ${checkText}`);
+  }
+
+  return lines.length > 0 ? lines : null;
+}
+
 function formatReportTimestamp(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
@@ -595,11 +669,17 @@ function formatReportTimestamp(d: Date): string {
  * table for every module, plus a per-invariant detail section for any module that came back CHANGED or
  * BREAKING. The timestamp is derived from the `timestamp` argument (not Date.now()) so this stays
  * testable.
+ *
+ * `modules` (iteration 3.5) is optional and purely for report FORMATTING — it lets a CHANGED/BREAKING
+ * module's detail subsection be enriched with a "### For managers" block reusing that module's existing
+ * business brief (iteration 3.1), when one exists on disk. It is never required: an empty/omitted list
+ * just means every module's report renders exactly as it did before briefs existed.
  */
 export async function writeVerifyReport(
   projectRoot: string,
   reports: VerifyModuleReport[],
   timestamp: Date,
+  modules: ModuleDescriptor[] = [],
 ): Promise<string> {
   const dir = path.join(getDocmapRoot(projectRoot), '.reports');
   await fs.mkdir(dir, { recursive: true });
@@ -622,6 +702,7 @@ export async function writeVerifyReport(
     (r) => r.status === 'verified' && (r.verdict === 'CHANGED' || r.verdict === 'BREAKING'),
   );
   if (detailed.length > 0) {
+    const relRootPathById = new Map(modules.map((m) => [m.id, m.relRootPath]));
     lines.push('', '## Details');
     for (const r of detailed) {
       lines.push('', `### ${r.name} (${r.moduleId}) — ${r.verdict}`);
@@ -635,6 +716,11 @@ export async function writeVerifyReport(
       if (r.undocumented && r.undocumented.length > 0) {
         lines.push('', 'Undocumented behavior:');
         for (const u of r.undocumented) lines.push(`- ${u}`);
+      }
+
+      const managerLines = await buildForManagersLines(projectRoot, r, relRootPathById.get(r.moduleId));
+      if (managerLines) {
+        lines.push('', '### For managers', ...managerLines);
       }
     }
   }
