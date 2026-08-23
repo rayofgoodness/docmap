@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildMermaidGraph } from '../../src/core/relationshipGraph.js';
-import type { ModuleDescriptor, RelationDescriptor } from '../../src/adapters/types.js';
+import { buildMermaidGraph, buildUserFlows } from '../../src/core/relationshipGraph.js';
+import type { ElementDescriptor, ModuleDescriptor, RelationDescriptor } from '../../src/adapters/types.js';
 
 function makeModule(overrides: Partial<ModuleDescriptor> & { id: string; name: string }): ModuleDescriptor {
   return {
@@ -18,6 +18,14 @@ function makeRelation(overrides: Partial<RelationDescriptor> & { fromId: string;
   return {
     type: 'import',
     confidence: 'deterministic',
+    ...overrides,
+  };
+}
+
+function makeElement(overrides: Partial<ElementDescriptor> & { id: string; kind: ElementDescriptor['kind'] }): ElementDescriptor {
+  return {
+    name: overrides.id,
+    files: [],
     ...overrides,
   };
 }
@@ -108,5 +116,128 @@ describe('buildMermaidGraph', () => {
         expect(result.edgeTable).toContain(`| ${id} | import | ${otherId} | deterministic |`);
       }
     }
+  });
+});
+
+describe('buildUserFlows', () => {
+  it('finds a page -> store -> server-route -> peer chain as one 4-node flow, in order', () => {
+    const pageToStore = makeRelation({
+      type: 'store',
+      fromId: 'pages::CartPage',
+      toId: 'stores::cartStore',
+      toModule: 'stores',
+      confidence: 'heuristic',
+    });
+    const storeToServer = makeRelation({
+      type: 'api-call',
+      fromId: 'stores::cartStore',
+      toId: 'server::api/cart.get.ts',
+      toModule: 'server',
+      confidence: 'heuristic',
+    });
+    const serverToPeer = makeRelation({
+      type: 'api-call',
+      fromId: 'server::api/cart.get.ts',
+      toId: 'peer:backend::vendor_sales::etc/webapi.xml',
+      toModule: 'peer:backend::vendor_sales',
+      operation: 'REST GET /V1/carts/mine',
+      toModuleName: 'Vendor_Sales',
+      confidence: 'heuristic',
+    });
+
+    const modules: ModuleDescriptor[] = [
+      makeModule({
+        id: 'pages',
+        name: 'Pages',
+        elements: [makeElement({ id: 'CartPage', kind: 'page' })],
+        relations: [pageToStore],
+      }),
+      makeModule({
+        id: 'stores',
+        name: 'Stores',
+        elements: [makeElement({ id: 'cartStore', kind: 'store' })],
+        relations: [storeToServer],
+      }),
+      makeModule({
+        id: 'server',
+        name: 'Server',
+        elements: [makeElement({ id: 'api/cart.get.ts', kind: 'server-route' })],
+        relations: [serverToPeer],
+      }),
+    ];
+
+    const flows = buildUserFlows(modules);
+
+    expect(flows).toEqual([
+      [
+        'pages::CartPage',
+        'stores::cartStore',
+        'server::api/cart.get.ts',
+        'peer:backend::vendor_sales::etc/webapi.xml',
+      ],
+    ]);
+  });
+
+  it('returns zero flows when no relation chain reaches 3 nodes', () => {
+    const pageToStore = makeRelation({
+      type: 'store',
+      fromId: 'pages::CartPage',
+      toId: 'stores::cartStore',
+      toModule: 'stores',
+      confidence: 'heuristic',
+    });
+
+    const modules: ModuleDescriptor[] = [
+      makeModule({
+        id: 'pages',
+        name: 'Pages',
+        elements: [makeElement({ id: 'CartPage', kind: 'page' })],
+        relations: [pageToStore],
+      }),
+      makeModule({ id: 'stores', name: 'Stores', elements: [makeElement({ id: 'cartStore', kind: 'store' })] }),
+    ];
+
+    expect(buildUserFlows(modules)).toEqual([]);
+  });
+
+  it('does not infinite-loop on a relation cycle and returns a bounded set of maximal paths', () => {
+    // A(page) -> B -> C -> A (cycle back to the start) and B -> D (a second, non-cyclic branch),
+    // so two distinct maximal simple paths exist: A->B->C (dead-ends because A is already visited)
+    // and A->B->D (dead-ends because D has no outgoing edges).
+    const modules: ModuleDescriptor[] = [
+      makeModule({
+        id: 'a',
+        name: 'A',
+        elements: [makeElement({ id: 'A', kind: 'page' })],
+        relations: [makeRelation({ fromId: 'a::A', toId: 'b::B', toModule: 'b' })],
+      }),
+      makeModule({
+        id: 'b',
+        name: 'B',
+        elements: [makeElement({ id: 'B', kind: 'component' })],
+        relations: [
+          makeRelation({ fromId: 'b::B', toId: 'c::C', toModule: 'c' }),
+          makeRelation({ fromId: 'b::B', toId: 'd::D', toModule: 'd' }),
+        ],
+      }),
+      makeModule({
+        id: 'c',
+        name: 'C',
+        elements: [makeElement({ id: 'C', kind: 'component' })],
+        relations: [makeRelation({ fromId: 'c::C', toId: 'a::A', toModule: 'a' })],
+      }),
+      makeModule({
+        id: 'd',
+        name: 'D',
+        elements: [makeElement({ id: 'D', kind: 'component' })],
+      }),
+    ];
+
+    const flows = buildUserFlows(modules);
+
+    expect(Array.isArray(flows)).toBe(true);
+    expect(flows.length).toBe(2);
+    expect(flows).toContainEqual(['a::A', 'b::B', 'c::C']);
+    expect(flows).toContainEqual(['a::A', 'b::B', 'd::D']);
   });
 });

@@ -101,3 +101,99 @@ export function buildMermaidGraph(modules: ModuleDescriptor[]): MermaidGraphResu
     edgeTable: truncated ? buildEdgeTable(edges) : '',
   };
 }
+
+/**
+ * Above this many collected flows, further DFS branches are abandoned even if not yet exhausted.
+ * Mirrors MAX_DIAGRAM_EDGES's reasoning: a densely-connected project (many pages, each with several
+ * branching relations) can have combinatorially many simple paths, and enumerating every one of
+ * them isn't the point — a manager/QA reader skimming index.md wants a representative sample of
+ * end-to-end routes to regression-test, not an exhaustive path enumeration. 50 is picked as a round
+ * number comfortably above what a real project's "distinct user journeys" count usually looks like
+ * (dozens, not hundreds) while still bounding worst-case work on adversarial/synthetic graphs. This
+ * is a deliberate cap, not a claim that every possible page-rooted path is represented below it.
+ */
+const MAX_USER_FLOWS = 50;
+
+/** Builds a `fromId -> [toId, ...]` adjacency list from every module's relations, deduplicated by
+ * (from, to) pair regardless of relation type — buildUserFlows walks node-to-node, so two relations
+ * of different types between the same pair of nodes should still only produce one graph edge. Skips
+ * exact self-loops (fromId === toId) the same way buildMermaidGraph skips module-level self-loops. */
+function buildFlowAdjacency(modules: ModuleDescriptor[]): Map<string, string[]> {
+  const seenEdges = new Set<string>();
+  const adjacency = new Map<string, string[]>();
+
+  for (const module of modules) {
+    for (const rel of module.relations) {
+      const { fromId, toId } = rel;
+      if (!fromId || !toId || fromId === toId) continue;
+      const edgeKey = `${fromId}->${toId}`;
+      if (seenEdges.has(edgeKey)) continue;
+      seenEdges.add(edgeKey);
+      const existing = adjacency.get(fromId);
+      if (existing) existing.push(toId);
+      else adjacency.set(fromId, [toId]);
+    }
+  }
+
+  return adjacency;
+}
+
+/** DFS from `node`, extending `path` through unvisited neighbors only (simple-path/no-revisit —
+ * this is what makes the walk cycle-safe without any separate cycle detection: a relation cycle
+ * just means every neighbor of the last node is already in `visited`, so the branch dead-ends).
+ * A path is recorded only when it can't be extended further (every neighbor already visited, or no
+ * neighbors at all) and has at least 3 nodes — so a linear page->store->server->peer chain records
+ * once, at its full length, rather than also recording its page->store->server prefix. */
+function walkFlows(
+  node: string,
+  path: string[],
+  visited: Set<string>,
+  adjacency: Map<string, string[]>,
+  flows: string[][],
+): void {
+  if (flows.length >= MAX_USER_FLOWS) return;
+
+  const neighbors = adjacency.get(node) ?? [];
+  const unvisited = neighbors.filter((n) => !visited.has(n));
+
+  if (unvisited.length === 0) {
+    if (path.length >= 3) flows.push([...path]);
+    return;
+  }
+
+  for (const next of unvisited) {
+    if (flows.length >= MAX_USER_FLOWS) return;
+    visited.add(next);
+    path.push(next);
+    walkFlows(next, path, visited, adjacency, flows);
+    path.pop();
+    visited.delete(next);
+  }
+}
+
+/**
+ * Deterministic (no LLM) end-to-end route finder: starting from every `page` element, walks the
+ * same module.relations data buildMermaidGraph reads, but at element granularity, following
+ * `fromId -> toId` edges (already fully-qualified as `moduleId::elementId` by every current relation
+ * producer — nuxt4/relations.ts and crossStack.ts both build `fromId` that way; `toId` is either the
+ * same shape, a bare `moduleId` for a module-level `import` relation, or a `peer:<name>::<moduleId>
+ * ::<elementId>` cross-stack id) to collect maximal simple paths of 3+ nodes: a "here's exactly what
+ * happens when a user clicks this button" chain, e.g. a page that uses a store that calls a server
+ * route that calls out to a peer backend module. Each returned path is ordered page-first.
+ */
+export function buildUserFlows(modules: ModuleDescriptor[]): string[][] {
+  const adjacency = buildFlowAdjacency(modules);
+  const flows: string[][] = [];
+
+  for (const module of modules) {
+    if (flows.length >= MAX_USER_FLOWS) break;
+    for (const element of module.elements) {
+      if (element.kind !== 'page') continue;
+      if (flows.length >= MAX_USER_FLOWS) break;
+      const start = `${module.id}::${element.id}`;
+      walkFlows(start, [start], new Set([start]), adjacency, flows);
+    }
+  }
+
+  return flows;
+}
