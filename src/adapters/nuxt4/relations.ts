@@ -12,24 +12,36 @@ function stripExt(absPath: string): string {
   return absPath.replace(/\.(js|ts|jsx|tsx|vue|mjs|cjs)$/, '');
 }
 
+interface StoreLocation {
+  moduleId: string;
+  elementId: string;
+}
+
 export async function resolveNuxt4Relations(
   modules: ModuleDescriptor[],
   appRoot: string,
   projectRoot: string,
 ): Promise<RelationDescriptor[]> {
   const relations: RelationDescriptor[] = [];
-  const serverModule = modules.find((m) => m.id === 'server');
-  const storesModule = modules.find((m) => m.id === 'stores');
+  // Store/server code isn't confined to the root `stores`/`server` modules — a layer builds its own
+  // `layer_<name>__stores`/`layer_<name>__server` modules, and those must participate in relation
+  // matching exactly like the root ones do. So collect every module that actually holds elements of
+  // the relevant kind, rather than looking up a single hardcoded module id.
+  const serverModules = modules.filter((m) => m.elements.some((e) => e.kind === 'server-route'));
+  const storeModules = modules.filter((m) => m.elements.some((e) => e.kind === 'store'));
 
-  const storeIdByLowerName = new Map<string, string>(); // e.g. "cart" -> element id of the store file
-  if (storesModule) {
+  const storeIdByLowerName = new Map<string, StoreLocation>(); // e.g. "cart" -> owning module + element id
+  for (const storesModule of storeModules) {
     for (const element of storesModule.elements) {
+      if (element.kind !== 'store') continue;
       const file = element.files[0];
       if (!file) continue;
       try {
         const content = await fs.readFile(file.absPath, 'utf8');
         const match = content.match(DEFINE_STORE_PATTERN);
-        if (match?.[1]) storeIdByLowerName.set(match[1].toLowerCase(), element.id);
+        if (match?.[1]) {
+          storeIdByLowerName.set(match[1].toLowerCase(), { moduleId: storesModule.id, elementId: element.id });
+        }
       } catch {
         // unreadable store file — skip
       }
@@ -65,42 +77,46 @@ export async function resolveNuxt4Relations(
         });
       }
 
-      if (serverModule && module.id !== 'server') {
+      if (serverModules.length > 0 && !serverModules.includes(module)) {
         FETCH_CALL_PATTERN.lastIndex = 0;
         let fetchMatch: RegExpExecArray | null;
         while ((fetchMatch = FETCH_CALL_PATTERN.exec(source)) !== null) {
           const url = fetchMatch[1];
           if (!url) continue;
-          const route = serverModule.elements.find((e) => e.summaryHints?.[0] === url);
-          if (route) {
-            relations.push({
-              type: 'api-call',
-              fromId,
-              toId: `server::${route.id}`,
-              toModule: 'server',
-              detail: url,
-              confidence: 'heuristic',
-            });
+          for (const serverModule of serverModules) {
+            const route = serverModule.elements.find((e) => e.kind === 'server-route' && e.summaryHints?.[0] === url);
+            if (route) {
+              relations.push({
+                type: 'api-call',
+                fromId,
+                toId: `${serverModule.id}::${route.id}`,
+                toModule: serverModule.id,
+                detail: url,
+                confidence: 'heuristic',
+              });
+              break;
+            }
           }
         }
       }
 
-      if (storesModule && module.id !== 'stores') {
+      if (storeModules.length > 0 && !storeModules.includes(module)) {
         STORE_CALL_PATTERN.lastIndex = 0;
         let storeMatch: RegExpExecArray | null;
         while ((storeMatch = STORE_CALL_PATTERN.exec(source)) !== null) {
           const candidate = storeMatch[1]?.toLowerCase();
-          const storeElementId = candidate ? storeIdByLowerName.get(candidate) : undefined;
-          if (!storeElementId) continue;
+          const storeLocation = candidate ? storeIdByLowerName.get(candidate) : undefined;
+          if (!storeLocation) continue;
           // An explicit `import ... from '~/stores/x'` already recorded the same dependency above —
           // the call-site relation only adds signal for stores pulled in via Nuxt auto-import.
-          const storeFile = storesModule.elements.find((e) => e.id === storeElementId)?.files[0];
+          const owningModule = modules.find((m) => m.id === storeLocation.moduleId);
+          const storeFile = owningModule?.elements.find((e) => e.id === storeLocation.elementId)?.files[0];
           if (storeFile && importedAbsPaths.has(stripExt(storeFile.absPath))) continue;
           relations.push({
             type: 'store',
             fromId,
-            toId: `stores::${storeElementId}`,
-            toModule: 'stores',
+            toId: `${storeLocation.moduleId}::${storeLocation.elementId}`,
+            toModule: storeLocation.moduleId,
             detail: `use${storeMatch[1]}Store()`,
             confidence: 'heuristic',
           });

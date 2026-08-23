@@ -30,26 +30,74 @@ async function findAutoLayers(projectRoot: string): Promise<string[]> {
   return entries.filter((entry) => entry.isDirectory()).map((entry) => `layers/${entry.name}`);
 }
 
-async function buildLayerModule(
+/**
+ * Builds the structured modules living inside a Nuxt layer: one module per APP_CATEGORIES entry
+ * (pages, components, composables, layouts, middleware, stores, plugins, utils) rooted at
+ * `<layerRoot>/<category.dirName>`, plus a server module for `<layerRoot>/server` — mirroring the
+ * exact category structure buildCategoryModule/buildServerModule produce at the app root, so a
+ * layer's stores and server routes get proper element kinds and participate in relation matching
+ * the same way root-level stores/server do. Module ids are namespaced `layer_<name>__<category>`
+ * (e.g. `layer_base__stores`) to avoid colliding with the root-level `stores`/`server` module ids.
+ *
+ * Any files sitting directly under the layer root that aren't covered by a category or by server/
+ * (e.g. a stray layer-level config file) fall back to a single flat "layer root" module, keeping
+ * the old flat-module behavior for just the leftover files — most layers won't have any.
+ */
+async function buildLayerModules(
   layerRelPath: string,
   projectRoot: string,
   exclude: string[],
   include: string[],
-): Promise<ModuleDescriptor | null> {
-  const rootPath = path.resolve(projectRoot, layerRelPath);
-  const files = await listFilesUnder(rootPath, exclude, include);
-  if (files.length === 0) return null;
+): Promise<ModuleDescriptor[]> {
+  const layerRoot = path.resolve(projectRoot, layerRelPath);
+  const layerName = path.basename(toPosixPath(layerRelPath).replace(/\/$/, ''));
+  const modules: ModuleDescriptor[] = [];
+  const coveredDirNames = new Set<string>([...APP_CATEGORIES.map((c) => c.dirName), 'server']);
 
-  return {
-    id: `layer_${layerRelPath.replace(/[^a-zA-Z0-9]+/g, '_')}`,
-    name: `Layer: ${layerRelPath}`,
-    rootPath,
-    relRootPath: toPosixPath(path.relative(projectRoot, rootPath)),
-    framework: 'nuxt4',
-    elements: files.map((f) => ({ id: f.relPath, kind: 'file' as const, name: path.basename(f.relPath), files: [f] })),
-    relations: [],
-    files,
-  };
+  for (const category of APP_CATEGORIES) {
+    const module = await buildCategoryModule(
+      { ...category, id: `layer_${layerName}__${category.id}`, name: `Layer ${layerName}: ${category.name}` },
+      path.join(layerRoot, category.dirName),
+      projectRoot,
+      exclude,
+      include,
+    );
+    if (module) modules.push(module);
+  }
+
+  const serverModule = await buildServerModule(
+    path.join(layerRoot, 'server'),
+    projectRoot,
+    exclude,
+    include,
+    `layer_${layerName}__server`,
+    `Layer ${layerName}: Server`,
+  );
+  if (serverModule) modules.push(serverModule);
+
+  // Files directly under the layer root that no category/server module above already claimed —
+  // this is the only case where the old flat "layer root" module still earns its keep.
+  const allFiles = await listFilesUnder(layerRoot, exclude, include);
+  const looseFiles = allFiles.filter((f) => !coveredDirNames.has(f.relPath.split('/')[0] ?? ''));
+  if (looseFiles.length > 0) {
+    modules.push({
+      id: `layer_${layerRelPath.replace(/[^a-zA-Z0-9]+/g, '_')}`,
+      name: `Layer: ${layerRelPath}`,
+      rootPath: layerRoot,
+      relRootPath: toPosixPath(path.relative(projectRoot, layerRoot)),
+      framework: 'nuxt4',
+      elements: looseFiles.map((f) => ({
+        id: f.relPath,
+        kind: 'file' as const,
+        name: path.basename(f.relPath),
+        files: [f],
+      })),
+      relations: [],
+      files: looseFiles,
+    });
+  }
+
+  return modules;
 }
 
 export const nuxt4Adapter: FrameworkAdapter = {
@@ -116,8 +164,8 @@ export const nuxt4Adapter: FrameworkAdapter = {
     }
 
     for (const layer of layerPaths.values()) {
-      const layerModule = await buildLayerModule(layer, projectRoot, config.exclude, config.include);
-      if (layerModule) modules.push(layerModule);
+      const layerModules = await buildLayerModules(layer, projectRoot, config.exclude, config.include);
+      modules.push(...layerModules);
     }
 
     return modules;

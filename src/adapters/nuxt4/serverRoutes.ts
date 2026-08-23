@@ -23,6 +23,8 @@ export async function buildServerModule(
   projectRoot: string,
   exclude: string[],
   include: string[],
+  idOverride?: string,
+  nameOverride?: string,
 ): Promise<ModuleDescriptor | null> {
   const files = await listFilesUnder(serverRootAbsPath, exclude, include);
   if (files.length === 0) return null;
@@ -36,8 +38,8 @@ export async function buildServerModule(
   }));
 
   return {
-    id: 'server',
-    name: 'Server',
+    id: idOverride ?? 'server',
+    name: nameOverride ?? 'Server',
     rootPath: serverRootAbsPath,
     relRootPath: toPosixPath(path.relative(projectRoot, serverRootAbsPath)),
     framework: 'nuxt4',
