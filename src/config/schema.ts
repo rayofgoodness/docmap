@@ -18,6 +18,7 @@ export const DocmapConfigSchema = z.object({
   timeoutMs: z.number().int().positive().default(600_000),
   elementDocThreshold: z.number().int().min(0).default(1),
   historyKeep: z.number().int().min(0).default(5),
+  peers: z.array(z.object({ name: z.string(), path: z.string() })).default([]),
 });
 
 export type DocmapConfig = z.infer<typeof DocmapConfigSchema>;
