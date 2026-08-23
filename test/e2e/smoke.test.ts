@@ -68,4 +68,15 @@ describe('e2e smoke: generate against generic-fake with mock runner', () => {
     expect(outcomes.modulea).toBe('generated');
     expect(outcomes.moduleb).toBe('skipped-up-to-date');
   });
+
+  it('rejects an unknown --module id instead of silently generating nothing', async () => {
+    const config = getDefaultConfig();
+
+    await expect(
+      runGenerate({ projectRoot, config, logger, runnerName: 'mock', moduleIds: ['not-a-real-module'] }),
+    ).rejects.toThrow(/Unknown module id.*"not-a-real-module".*Available modules:.*modulea.*moduleb/s);
+
+    // index.md must not be created/overwritten off the back of a rejected request
+    await expect(fs.access(path.join(projectRoot, '.docmap', 'index.md'))).rejects.toThrow();
+  });
 });

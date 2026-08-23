@@ -59,6 +59,17 @@ export async function runGenerate(options: GenerateOptions): Promise<GenerateSum
     ? modules.filter((m) => options.moduleIds!.includes(m.id))
     : modules;
 
+  if (options.moduleIds?.length) {
+    const matchedIds = new Set(targetModules.map((m) => m.id));
+    const unknownIds = options.moduleIds.filter((id) => !matchedIds.has(id));
+    if (unknownIds.length > 0) {
+      const available = modules.map((m) => m.id).join(', ') || '(no modules discovered)';
+      throw new Error(
+        `Unknown module id${unknownIds.length > 1 ? 's' : ''}: ${unknownIds.map((id) => `"${id}"`).join(', ')}. Available modules: ${available}`,
+      );
+    }
+  }
+
   const runner = dryRun ? null : getRunner(runnerName);
   if (runner) {
     const availability = await runner.checkAvailable();
