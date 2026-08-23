@@ -213,13 +213,13 @@ function fakeModule(id: string, relRootPath: string): ModuleDescriptor {
   };
 }
 
-function briefFrontmatter(moduleId: string): BriefFrontmatter {
+function briefFrontmatter(moduleId: string, sourceFingerprint = 'sha256:whatever'): BriefFrontmatter {
   return {
     docmap_version: 1,
     kind: 'brief',
     module: moduleId,
     language: 'en',
-    source_fingerprint: 'sha256:whatever',
+    source_fingerprint: sourceFingerprint,
     generated_at: '2026-01-01T00:00:00.000Z',
     generated_by: { runner: 'mock' },
   };
@@ -249,6 +249,7 @@ const breakingCheckoutReport: VerifyModuleReport = {
   verdict: 'BREAKING',
   invariants: [{ id: 'I1', verdict: 'VIOLATED', note: 'no longer enforced.' }],
   undocumented: ['New auto-refund path.'],
+  sourceFingerprint: 'sha256:whatever',
 };
 
 describe('writeVerifyReport', () => {
@@ -292,6 +293,22 @@ describe('writeVerifyReport', () => {
     expect(content).toContain(
       'what this means: this behavior may no longer work as expected — verify by: Pay for an order and confirm it only moves to paid after the payment processor confirms success.',
     );
+  });
+
+  it('omits the "### For managers" subsection when the on-disk brief\'s source_fingerprint no longer matches this verdict\'s baseline (stale brief, ids may not correspond)', async () => {
+    const module = fakeModule('checkout', 'checkout');
+    // Brief was generated from an OLDER tech-doc revision than the one this verdict was checked against —
+    // I1 in the stale brief may name a completely different rule than I1 in breakingCheckoutReport.
+    await writeBriefDoc(tmpDir, module, briefFrontmatter('checkout', 'sha256:an-older-revision'), checkoutBriefBody);
+
+    const reports: VerifyModuleReport[] = [breakingCheckoutReport];
+    const filePath = await writeVerifyReport(tmpDir, reports, new Date(2026, 0, 15, 9, 8), [module]);
+    const content = await fs.readFile(filePath, 'utf8');
+
+    expect(content).not.toContain('For managers');
+    // Technical content is still rendered normally.
+    expect(content).toContain('### checkout (checkout) — BREAKING');
+    expect(content).toContain('I1: VIOLATED — no longer enforced.');
   });
 
   it('omits the "### For managers" subsection (without erroring) when no brief exists on disk for the module', async () => {

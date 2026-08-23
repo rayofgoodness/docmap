@@ -170,7 +170,18 @@ export async function writeBriefDoc(
   frontmatter: BriefFrontmatter,
   body: string,
 ): Promise<void> {
-  await atomicWrite(getBriefDocPath(projectRoot, module), renderDoc(frontmatter, body));
+  const briefPath = getBriefDocPath(projectRoot, module);
+  // A module whose relRootPath happens to be "glossary" resolves to the exact same file the project-wide
+  // glossary is written to — silently writing there would either clobber a real brief with the glossary
+  // (or vice versa) with no error, and the loser would permanently fail BriefFrontmatterSchema validation
+  // on every future read. Refuse loudly instead; the caller's per-module error handling surfaces this as
+  // a normal report entry rather than crashing the whole run.
+  if (briefPath === getGlossaryDocPath(projectRoot)) {
+    throw new Error(
+      `Cannot write a brief for module "${module.relRootPath}" — its brief path collides with the reserved project glossary path (.docmap/business/glossary.md). Rename the module directory or exclude it from docmap brief.`,
+    );
+  }
+  await atomicWrite(briefPath, renderDoc(frontmatter, body));
 }
 
 export async function readBriefDoc(

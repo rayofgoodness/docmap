@@ -354,6 +354,12 @@ export interface VerifyModuleReport {
   invariants?: InvariantVerdict[];
   undocumented?: string[];
   error?: string;
+  /** The baseline doc's own fingerprint (oldDoc.frontmatter.fingerprint) this verdict's invariant ids
+   * were checked against — I1/I2/... are assigned by list position, not stable identity, so a brief
+   * consumer (buildForManagersLines) must confirm its brief was generated from this SAME doc revision
+   * before trusting that "I1" names the same rule the brief describes. Only set on status 'verified'
+   * with a verdict. */
+  sourceFingerprint?: string | null;
 }
 
 export interface VerifyOptions {
@@ -597,6 +603,7 @@ export async function verifyModule(args: {
     verdict: parsed.summary as 'COMPATIBLE' | 'CHANGED' | 'BREAKING',
     invariants: parsed.invariants,
     undocumented: parsed.undocumented,
+    sourceFingerprint: oldDoc.frontmatter.fingerprint ?? null,
   };
 }
 
@@ -652,6 +659,13 @@ async function buildForManagersLines(
 
   const brief = await readBriefDoc(projectRoot, { relRootPath });
   if (!brief) return null;
+
+  // Invariant ids are assigned by list position in the tech doc, not stable identity — "I1" in a brief
+  // generated from one doc revision can name a completely different rule than "I1" in this verdict, if
+  // the brief wasn't regenerated after the tech doc changed. A brief whose source_fingerprint doesn't
+  // match the exact doc revision this verdict was computed against must never be presented as if it
+  // describes the current verdict.
+  if (brief.frontmatter.source_fingerprint !== report.sourceFingerprint) return null;
 
   const labels = getSectionLabels(brief.frontmatter.language);
   const businessRules = parseBriefIdSection(brief.body, labels.briefBusinessRules);

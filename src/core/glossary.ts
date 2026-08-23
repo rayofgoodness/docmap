@@ -1,6 +1,6 @@
 import type { ModuleDescriptor } from '../adapters/types.js';
 import type { ResolvedDocmapConfig } from '../config/schema.js';
-import type { GlossaryFrontmatter } from '../docFormat/frontmatter.js';
+import type { BriefFrontmatter, GlossaryFrontmatter } from '../docFormat/frontmatter.js';
 import type { Logger } from '../utils/logger.js';
 import { getSectionLabels, type SectionLabels } from '../utils/lang.js';
 import { BODY_END, BODY_START, parseAgentOutput } from './markers.js';
@@ -95,40 +95,26 @@ export interface GlossaryResult {
   reason?: string;
 }
 
-export interface BuildGlossaryOptions {
-  projectRoot: string;
-  /** Modules discovered in THIS run — buildGlossary reads whichever of these currently have a brief on
-   * disk (readBriefDoc), regardless of whether this particular run (re)generated it. */
-  modules: ModuleDescriptor[];
-  config: ResolvedDocmapConfig;
-  runner: AgentRunner;
-  logger?: Logger;
+export interface GlossaryCallOutcome {
+  parsed: string | null;
+  lastResult: RunnerResult;
+  /** The timeout the last attempt actually ran with — retries after a timeout escalate it (mirrors
+   * verify.ts's VerifyCallOutcome / brief.ts's BriefCallOutcome). */
+  effectiveTimeoutMs: number;
 }
 
 /**
- * Runs once at the end of a full (non-`--module`-scoped) `docmap brief` run: aggregates every module's
- * currently-on-disk brief into one prompt and asks for a single glossary block. Intentionally takes
- * `runner`/`config` rather than re-resolving them, since runBrief already has a checked-available
- * runner in hand by the time it finishes the per-module pass.
+ * Single glossary-aggregation call with the same retry-escalation shape as verify.ts's runVerifyCall and
+ * brief.ts's runBriefCall: timeout doubling on a likely timeout, a plain resend on a runner error, and a
+ * stricter-contract-reminder resend when the agent replied without the required marker block.
  */
-export async function buildGlossary(options: BuildGlossaryOptions): Promise<GlossaryResult> {
-  const { projectRoot, modules, config, runner, logger } = options;
-  const labels = getSectionLabels(config.language);
-
-  const briefs: GlossaryBriefInput[] = [];
-  for (const module of modules) {
-    const brief = await readBriefDoc(projectRoot, module);
-    if (!brief) continue;
-    briefs.push({ module, excerpt: buildGlossaryExcerpt(brief.body, labels) });
-  }
-
-  if (briefs.length === 0) {
-    logger?.info('[glossary] skip — no briefs on disk to build a glossary from');
-    return { written: false, reason: 'no briefs available' };
-  }
-
-  const prompt = buildGlossaryPrompt(briefs, labels, config.language);
-
+export async function runGlossaryCall(
+  prompt: string,
+  projectRoot: string,
+  config: ResolvedDocmapConfig,
+  runner: AgentRunner,
+  logger?: Logger,
+): Promise<GlossaryCallOutcome> {
   const call = async (p: string, timeoutMs: number) => {
     const result = await runner.run({
       prompt: p,
@@ -142,9 +128,7 @@ export async function buildGlossary(options: BuildGlossaryOptions): Promise<Glos
   };
 
   let timeoutMs = config.timeoutMs;
-  let result: RunnerResult;
-  let parsed: string | null;
-  ({ result, parsed } = await call(prompt, timeoutMs));
+  let { result, parsed } = await call(prompt, timeoutMs);
 
   let attempts = 0;
   while (parsed === null && attempts < config.maxRetries) {
@@ -167,8 +151,61 @@ export async function buildGlossary(options: BuildGlossaryOptions): Promise<Glos
     }
   }
 
+  return { parsed, lastResult: result, effectiveTimeoutMs: timeoutMs };
+}
+
+export interface BuildGlossaryOptions {
+  projectRoot: string;
+  /** Modules discovered in THIS run — buildGlossary reads whichever of these currently have a brief on
+   * disk (readBriefDoc), regardless of whether this particular run (re)generated it. */
+  modules: ModuleDescriptor[];
+  config: ResolvedDocmapConfig;
+  runner: AgentRunner;
+  logger?: Logger;
+  /** Brief content this same run already loaded (runBrief's per-module pass), keyed by module id — used
+   * instead of a second readBriefDoc for any module present here, avoiding a redundant disk read+parse
+   * over content that was in memory moments earlier. Modules not in the map (e.g. an 'error'/'missing'
+   * status this run, or none provided at all) fall back to reading from disk as before. */
+  knownBriefs?: Map<string, { frontmatter: BriefFrontmatter; body: string }>;
+}
+
+/**
+ * Runs once at the end of a full (non-`--module`-scoped) `docmap brief` run: aggregates every module's
+ * currently-on-disk brief into one prompt and asks for a single glossary block. Intentionally takes
+ * `runner`/`config` rather than re-resolving them, since runBrief already has a checked-available
+ * runner in hand by the time it finishes the per-module pass.
+ */
+export async function buildGlossary(options: BuildGlossaryOptions): Promise<GlossaryResult> {
+  const { projectRoot, modules, config, runner, logger, knownBriefs } = options;
+
+  const briefResults = await Promise.all(
+    modules.map(async (module) => {
+      const brief = knownBriefs?.get(module.id) ?? (await readBriefDoc(projectRoot, module));
+      if (!brief) return null;
+      // Each brief's own stored language, NOT this run's config.language — a brief may have been
+      // generated in a different language than the current run (e.g. before a --lang change), and using
+      // the wrong labels here means splitSections finds no matching headings and silently falls back to
+      // stuffing the entire brief body (business rules/QA bulk included) into the glossary prompt.
+      const briefLabels = getSectionLabels(brief.frontmatter.language);
+      return { module, excerpt: buildGlossaryExcerpt(brief.body, briefLabels) } satisfies GlossaryBriefInput;
+    }),
+  );
+  const briefs = briefResults.filter((b): b is GlossaryBriefInput => b !== null);
+
+  if (briefs.length === 0) {
+    logger?.info('[glossary] skip — no briefs on disk to build a glossary from');
+    return { written: false, reason: 'no briefs available' };
+  }
+
+  // The glossary itself is a NEW document generated fresh by this run, so its own headings/prose use the
+  // current run's requested language — unlike the per-brief excerpt labels above, which must match
+  // whatever language each individual brief already happens to be written in.
+  const promptLabels = getSectionLabels(config.language);
+  const prompt = buildGlossaryPrompt(briefs, promptLabels, config.language);
+
+  const { parsed, lastResult, effectiveTimeoutMs } = await runGlossaryCall(prompt, projectRoot, config, runner, logger);
   if (parsed === null) {
-    const reason = describeBatchFailure(result, timeoutMs);
+    const reason = describeBatchFailure(lastResult, effectiveTimeoutMs);
     logger?.warn(`[error] glossary — did not return a valid response (${reason})`);
     return { written: false, reason };
   }

@@ -6,11 +6,13 @@ import {
   getElementDocPath,
   getModuleDocPath,
   getModuleHistoryDir,
+  readBriefDoc,
   readModuleDoc,
   snapshotModuleDocHistory,
+  writeBriefDoc,
   writeModuleDoc,
 } from '../../src/core/docWriter.js';
-import type { ModuleFrontmatter } from '../../src/docFormat/frontmatter.js';
+import type { BriefFrontmatter, ModuleFrontmatter } from '../../src/docFormat/frontmatter.js';
 
 let tmpDir: string;
 
@@ -65,6 +67,39 @@ describe('docWriter', () => {
     expect(() =>
       getElementDocPath(tmpDir, { relRootPath: 'mod' }, { id: '../../../etc/passwd' }),
     ).not.toThrow(); // slugified, so traversal chars become underscores rather than escaping
+  });
+});
+
+describe('writeBriefDoc — reserved glossary path', () => {
+  function briefFrontmatter(overrides: Partial<BriefFrontmatter> = {}): BriefFrontmatter {
+    return {
+      docmap_version: 1,
+      kind: 'brief',
+      module: 'glossary',
+      language: 'en',
+      source_fingerprint: 'sha256:x',
+      generated_at: '2026-08-20T00:00:00.000Z',
+      generated_by: { runner: 'mock' },
+      ...overrides,
+    };
+  }
+
+  it('refuses to write a brief for a module whose relRootPath is "glossary" (collides with the project glossary path)', async () => {
+    await expect(
+      writeBriefDoc(tmpDir, { relRootPath: 'glossary' }, briefFrontmatter(), '## What this module does\nhi'),
+    ).rejects.toThrow(/reserved project glossary path/);
+    expect(await readBriefDoc(tmpDir, { relRootPath: 'glossary' })).toBeNull();
+  });
+
+  it('writes normally for a module whose relRootPath merely contains "glossary" as a substring', async () => {
+    await writeBriefDoc(
+      tmpDir,
+      { relRootPath: 'glossary-terms' },
+      briefFrontmatter({ module: 'glossary-terms' }),
+      '## What this module does\nhi',
+    );
+    const result = await readBriefDoc(tmpDir, { relRootPath: 'glossary-terms' });
+    expect(result?.body).toContain('## What this module does');
   });
 });
 

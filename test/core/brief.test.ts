@@ -23,17 +23,62 @@ import type { AgentRunner, RunnerInvocation, RunnerResult } from '../../src/runn
 import type { DiscoveryContext, ModuleDescriptor } from '../../src/adapters/types.js';
 
 describe('parseBriefOutput', () => {
-  it('extracts and trims the content of a valid block', () => {
-    const text = `chatter before\n${BRIEF_START}\n## What this module does\nOrders lets shoppers buy things.\n${BRIEF_END}\nchatter after`;
-    expect(parseBriefOutput(text)).toBe('## What this module does\nOrders lets shoppers buy things.');
+  const labels = getSectionLabels('en');
+  const allHeadings = [
+    `## ${labels.briefWhatItDoes}`,
+    `## ${labels.briefKeyScenarios}`,
+    `## ${labels.briefBusinessRules}`,
+    `## ${labels.briefWhatToCheck}`,
+    `## ${labels.briefDependencyRisks}`,
+  ];
+
+  function completeBody(): string {
+    return [
+      `${labels.briefWhatItDoes}\nOrders lets shoppers buy things.`,
+      `${labels.briefKeyScenarios}\n- A shopper places an order.`,
+      `${labels.briefBusinessRules}\nI1: An order can only be cancelled while pending.`,
+      `${labels.briefWhatToCheck}\nI1: Cancel a pending order and confirm it moves to cancelled.`,
+      `${labels.briefDependencyRisks}\n- (no other modules currently depend on this one)`,
+    ]
+      .map((s) => `## ${s}`)
+      .join('\n\n');
+  }
+
+  it('extracts and trims the content of a valid, structurally-complete block', () => {
+    const text = `chatter before\n${BRIEF_START}\n${completeBody()}\n${BRIEF_END}\nchatter after`;
+    const result = parseBriefOutput(text, labels, ['I1']);
+    expect(result).not.toBeNull();
+    for (const heading of allHeadings) expect(result).toContain(heading);
   });
 
   it('returns null when the markers are missing entirely', () => {
-    expect(parseBriefOutput('## What this module does\nsome prose')).toBeNull();
+    expect(parseBriefOutput('## What this module does\nsome prose', labels, [])).toBeNull();
   });
 
   it('returns null when only BRIEF_START is present (no closing marker)', () => {
-    expect(parseBriefOutput(`${BRIEF_START}\n## What this module does\n...`)).toBeNull();
+    expect(parseBriefOutput(`${BRIEF_START}\n## What this module does\n...`, labels, [])).toBeNull();
+  });
+
+  it('returns null when a required heading is missing (e.g. Dependency risks dropped)', () => {
+    const incomplete = [
+      `## ${labels.briefWhatItDoes}\nOrders lets shoppers buy things.`,
+      `## ${labels.briefKeyScenarios}\n- A shopper places an order.`,
+      `## ${labels.briefBusinessRules}\nI1: An order can only be cancelled while pending.`,
+      `## ${labels.briefWhatToCheck}\nI1: Cancel a pending order and confirm it moves to cancelled.`,
+    ].join('\n\n');
+    const text = `${BRIEF_START}\n${incomplete}\n${BRIEF_END}`;
+    expect(parseBriefOutput(text, labels, ['I1'])).toBeNull();
+  });
+
+  it('returns null when a promised invariant id never appears in the body', () => {
+    const text = `${BRIEF_START}\n${completeBody()}\n${BRIEF_END}`;
+    // completeBody() only covers I1 — asking for I2 too must fail the contract check.
+    expect(parseBriefOutput(text, labels, ['I1', 'I2'])).toBeNull();
+  });
+
+  it('accepts a body with zero invariants when none were required', () => {
+    const text = `${BRIEF_START}\n${completeBody()}\n${BRIEF_END}`;
+    expect(parseBriefOutput(text, labels, [])).not.toBeNull();
   });
 });
 
@@ -275,6 +320,62 @@ describe('briefModule', () => {
     expect(report.status).toBe('error');
     expect(report.error).toBeTruthy();
     expect(await readBriefDoc(tmpDir, module)).toBeNull();
+  });
+
+  it('regenerates instead of skipping when the tech doc fingerprint matches but the requested language changed', async () => {
+    const module = await makeModule();
+    await writeModuleDoc(tmpDir, module, makeTechFrontmatter({ fingerprint: 'sha256:tech-fp' }), '## Business Logic\nOrders.');
+
+    const ukLabels = getSectionLabels('uk');
+    const ukGoodBriefText = [
+      BRIEF_START,
+      `## ${ukLabels.briefWhatItDoes}`,
+      'Модуль замовлень дозволяє покупцям розміщувати та скасовувати замовлення.',
+      '',
+      `## ${ukLabels.briefKeyScenarios}`,
+      '- Покупець скасовує замовлення до відправлення.',
+      '',
+      `## ${ukLabels.briefBusinessRules}`,
+      'I1: Замовлення можна скасувати лише в статусі pending або on-hold.',
+      '',
+      `## ${ukLabels.briefWhatToCheck}`,
+      'I1: Створити замовлення, перевести в pending, скасувати, підтвердити статус cancelled.',
+      '',
+      `## ${ukLabels.briefDependencyRisks}`,
+      '- (жоден інший модуль наразі не залежить від цього)',
+      BRIEF_END,
+    ].join('\n');
+
+    const { runner, invocations } = fakeRunner([
+      runnerResult({ text: goodBriefText }),
+      runnerResult({ text: ukGoodBriefText }),
+    ]);
+    const first = await callBriefModule(module, runner);
+    expect(first.status).toBe('generated');
+    expect((await readBriefDoc(tmpDir, module))!.frontmatter.language).toBe('en');
+
+    // Same tech doc, same fingerprint — but this run asks for a different language.
+    const second = await callBriefModule(module, runner, { language: 'uk' });
+    expect(second.status).toBe('generated');
+    expect(invocations).toHaveLength(2);
+    expect((await readBriefDoc(tmpDir, module))!.frontmatter.language).toBe('uk');
+  });
+
+  it('effectiveTimeoutMs in the error message reflects a doubled retry timeout, not the original config value', async () => {
+    const module = await makeModule();
+    await writeModuleDoc(tmpDir, module, makeTechFrontmatter({ fingerprint: 'sha256:tech-fp' }), '## Business Logic\nOrders.');
+
+    // First attempt looks like a timeout (not ok, duration close to timeoutMs) -> escalates to 2000ms;
+    // second attempt fails outright, exhausting maxRetries: 1.
+    const { runner } = fakeRunner([
+      runnerResult({ ok: false, durationMs: 980, exitCode: null }),
+      runnerResult({ ok: false, durationMs: 1900, exitCode: 1, error: 'boom' }),
+    ]);
+    const report = await callBriefModule(module, runner, { maxRetries: 1, timeoutMs: 1000 });
+
+    expect(report.status).toBe('error');
+    expect(report.error).toContain('2s limit');
+    expect(report.error).not.toContain('1s limit');
   });
 });
 

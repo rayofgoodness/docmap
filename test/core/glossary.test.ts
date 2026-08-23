@@ -221,6 +221,62 @@ describe('buildGlossary', () => {
     expect(invocations[0]!.prompt).not.toContain('module-id: broken');
   });
 
+  it('reads a brief\'s excerpt using ITS OWN stored language, not the current run\'s config.language', async () => {
+    const orders = makeModule('orders');
+    // Brief was generated in 'uk' — its headings are the Ukrainian labels, not the English ones.
+    const ukLabels = getSectionLabels('uk');
+    await writeBriefDoc(
+      tmpDir,
+      orders,
+      { ...makeBriefFrontmatter('orders'), language: 'uk' },
+      `## ${ukLabels.briefWhatItDoes}\nOrders lets shoppers place and cancel orders.\n\n## ${ukLabels.briefKeyScenarios}\n- A shopper places an order.\n\n## ${ukLabels.briefBusinessRules}\n(none documented)`,
+    );
+
+    // This run's own requested language is English — must not affect how orders' brief is read.
+    const { runner, invocations } = fakeRunner([runnerResult({ text: glossaryText })]);
+    const result = await buildGlossary({
+      projectRoot: tmpDir,
+      modules: [orders],
+      config: { ...getDefaultConfig(), language: 'en' },
+      runner,
+    });
+
+    expect(result).toEqual({ written: true });
+    // If the wrong (English) labels had been used to split the Ukrainian-headed brief, splitSections
+    // would find no matching section and buildGlossaryExcerpt would fall back to stuffing the ENTIRE
+    // body — including the Business rules section — into the prompt. Correct per-brief-language
+    // handling keeps that section out of the excerpt.
+    expect(invocations[0]!.prompt).toContain('A shopper places an order.');
+    expect(invocations[0]!.prompt).not.toContain(ukLabels.briefBusinessRules);
+  });
+
+  it('reuses in-memory brief content passed via knownBriefs instead of reading it from disk again', async () => {
+    const orders = makeModule('orders');
+    // Deliberately do NOT write a brief to disk — the only content available is via knownBriefs, proving
+    // buildGlossary actually uses it rather than falling back to a disk read that would find nothing.
+    const knownBriefs = new Map([
+      [
+        'orders',
+        {
+          frontmatter: makeBriefFrontmatter('orders'),
+          body: '## What this module does\nOrders lets shoppers place and cancel orders in memory only.\n\n## Key scenarios\n- A shopper places an order.',
+        },
+      ],
+    ]);
+
+    const { runner, invocations } = fakeRunner([runnerResult({ text: glossaryText })]);
+    const result = await buildGlossary({
+      projectRoot: tmpDir,
+      modules: [orders],
+      config: getDefaultConfig(),
+      runner,
+      knownBriefs,
+    });
+
+    expect(result).toEqual({ written: true });
+    expect(invocations[0]!.prompt).toContain('Orders lets shoppers place and cancel orders in memory only.');
+  });
+
   it('surfaces a parse failure as a reason and writes no glossary file', async () => {
     const orders = makeModule('orders');
     await writeBriefDoc(tmpDir, orders, makeBriefFrontmatter('orders'), '## What this module does\nOrders.');

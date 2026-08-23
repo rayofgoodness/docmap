@@ -25,15 +25,34 @@ export const BRIEF_END = '<<<DOCMAP_BRIEF_END>>>';
 /**
  * Extracts the content between BRIEF_START/BRIEF_END — same simple single-block extraction style as
  * markers.ts's BODY_START/BODY_END (not the more complex per-element pattern), since a brief is always
- * exactly one block. Returns null when the markers aren't both present, which is the signal
- * runBriefCall uses to trigger a stricter-prompt retry.
+ * exactly one block. Returns null (triggering the same stricter-prompt retry runBriefCall uses for a
+ * missing block) when the markers aren't both present, OR when the body is missing one of the five
+ * required "## <label>" headings, OR when it's missing any invariant id the contract promised it must
+ * cover — a brief silently missing a section or an invariant is exactly as broken as one missing its
+ * markers entirely, and must not be persisted to disk as if it were complete.
  */
-export function parseBriefOutput(text: string): string | null {
+export function parseBriefOutput(text: string, labels: SectionLabels, invariantIds: string[]): string | null {
   const startIdx = text.indexOf(BRIEF_START);
   if (startIdx === -1) return null;
   const endIdx = text.indexOf(BRIEF_END, startIdx + BRIEF_START.length);
   if (endIdx === -1) return null;
-  return text.slice(startIdx + BRIEF_START.length, endIdx).trim();
+  const body = text.slice(startIdx + BRIEF_START.length, endIdx).trim();
+
+  const requiredHeadings = [
+    labels.briefWhatItDoes,
+    labels.briefKeyScenarios,
+    labels.briefBusinessRules,
+    labels.briefWhatToCheck,
+    labels.briefDependencyRisks,
+  ];
+  for (const heading of requiredHeadings) {
+    if (!body.includes(`## ${heading}`)) return null;
+  }
+  for (const id of invariantIds) {
+    if (!body.includes(id)) return null;
+  }
+
+  return body;
 }
 
 /**
@@ -121,6 +140,10 @@ export function buildBriefPrompt(
 export interface BriefCallOutcome {
   parsed: string | null;
   lastResult: RunnerResult;
+  /** The timeout the last attempt actually ran with — retries after a timeout escalate it. Without this,
+   * a failure message built from the original config.timeoutMs after a doubled retry reports the wrong
+   * limit (the exact bug an earlier review found and fixed in verify.ts's equivalent outcome type). */
+  effectiveTimeoutMs: number;
 }
 
 /**
@@ -137,6 +160,7 @@ export async function runBriefCall(
   logger?: Logger,
 ): Promise<BriefCallOutcome> {
   const labels = getSectionLabels(config.language);
+  const invariantIds = (techDoc.frontmatter.invariants ?? []).map((inv) => inv.id);
   const prompt = buildBriefPrompt(module, techDoc, labels, config.language);
 
   const call = async (p: string, timeoutMs: number) => {
@@ -148,7 +172,7 @@ export async function runBriefCall(
       timeoutMs,
       model: config.model,
     });
-    return { result, parsed: parseBriefOutput(result.text) };
+    return { result, parsed: parseBriefOutput(result.text, labels, invariantIds) };
   };
 
   let timeoutMs = config.timeoutMs;
@@ -177,7 +201,7 @@ export async function runBriefCall(
     }
   }
 
-  return { parsed, lastResult: result };
+  return { parsed, lastResult: result, effectiveTimeoutMs: timeoutMs };
 }
 
 export type BriefModuleStatus = 'missing' | 'unchanged' | 'generated' | 'error';
@@ -242,12 +266,25 @@ export async function runBrief(options: BriefOptions): Promise<BriefSummary> {
   );
   progress.startHeartbeat();
 
+  // Populated by briefModule's onBriefContent callback whenever it has a module's brief content in hand
+  // (freshly generated, or read to check for the unchanged-skip) — reused by buildGlossary below so a
+  // full run doesn't pay a second disk read+parse per module for content this same run already loaded.
+  const knownBriefs = new Map<string, { frontmatter: BriefFrontmatter; body: string }>();
+
   try {
     await Promise.all(
       targetModules.map((module) =>
         limit(async () => {
           try {
-            const report = await briefModule({ module, projectRoot, config, logger, runner, progress });
+            const report = await briefModule({
+              module,
+              projectRoot,
+              config,
+              logger,
+              runner,
+              progress,
+              onBriefContent: (content) => knownBriefs.set(module.id, content),
+            });
             reports.push(report);
           } catch (err) {
             reports.push({ moduleId: module.id, name: module.name, status: 'error', error: (err as Error).message });
@@ -267,7 +304,7 @@ export async function runBrief(options: BriefOptions): Promise<BriefSummary> {
   // where targetModules already covers every discovered module — triggers it.
   let glossary: GlossaryResult | undefined;
   if (!options.moduleIds?.length) {
-    glossary = await buildGlossary({ projectRoot, modules: targetModules, config, runner, logger });
+    glossary = await buildGlossary({ projectRoot, modules: targetModules, config, runner, logger, knownBriefs });
   }
 
   return { frameworkName, reports, glossary };
@@ -280,8 +317,12 @@ export async function briefModule(args: {
   logger: Logger;
   runner: AgentRunner;
   progress?: ProgressTracker;
+  /** Called whenever this module's brief content is available in memory — freshly generated, or read to
+   * check the unchanged-skip — so a caller (buildGlossary via runBrief) can reuse it instead of paying a
+   * second disk read+parse for content this same run already loaded. Never called for 'missing'/'error'. */
+  onBriefContent?: (content: { frontmatter: BriefFrontmatter; body: string }) => void;
 }): Promise<BriefModuleReport> {
-  const { module, projectRoot, config, logger, runner, progress } = args;
+  const { module, projectRoot, config, logger, runner, progress, onBriefContent } = args;
 
   const techDoc = await readModuleDoc(projectRoot, module);
   if (!techDoc) {
@@ -291,8 +332,13 @@ export async function briefModule(args: {
 
   const techFingerprint = techDoc.frontmatter.fingerprint ?? null;
   const existingBrief = await readBriefDoc(projectRoot, module);
-  if (existingBrief && existingBrief.frontmatter.source_fingerprint === techFingerprint) {
+  if (
+    existingBrief &&
+    existingBrief.frontmatter.source_fingerprint === techFingerprint &&
+    existingBrief.frontmatter.language === config.language
+  ) {
     logger.info(`[skip] ${module.id} — brief unchanged since last tech doc`);
+    onBriefContent?.(existingBrief);
     return { moduleId: module.id, name: module.name, status: 'unchanged' };
   }
 
@@ -307,10 +353,10 @@ export async function briefModule(args: {
     progress?.batchFinished(label);
   }
 
-  const { parsed, lastResult } = outcome;
+  const { parsed, lastResult, effectiveTimeoutMs } = outcome;
   if (parsed === null) {
     // A parse failure must never write a brief with garbage/missing content — surface it as an error.
-    const reason = describeBatchFailure(lastResult, config.timeoutMs);
+    const reason = describeBatchFailure(lastResult, effectiveTimeoutMs);
     logger.warn(`[error] ${module.id} — brief did not return a valid response (${reason})`);
     return { moduleId: module.id, name: module.name, status: 'error', error: reason };
   }
@@ -327,5 +373,6 @@ export async function briefModule(args: {
 
   await writeBriefDoc(projectRoot, module, briefFrontmatter, parsed);
   logger.info(`[ok] ${module.id} — brief generated in ${formatDuration(Date.now() - startedAt)}`);
+  onBriefContent?.({ frontmatter: briefFrontmatter, body: parsed });
   return { moduleId: module.id, name: module.name, status: 'generated' };
 }
