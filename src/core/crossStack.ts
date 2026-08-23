@@ -145,6 +145,8 @@ export async function resolveCrossStackRelations(
           fromId,
           toId: `peer:${peer.peerName}::${restMatch.peerModule.id}::${restMatch.element.id}`,
           toModule: `peer:${peer.peerName}::${restMatch.peerModule.id}`,
+          operation: `REST ${restMatch.hint}`,
+          toModuleName: restMatch.peerModule.name,
           detail: `REST ${restMatch.hint} -> ${restMatch.peerModule.name}`,
           confidence: 'heuristic',
         });
@@ -158,6 +160,8 @@ export async function resolveCrossStackRelations(
           fromId,
           toId: `peer:${peer.peerName}::${graphqlMatch.peerModule.id}::${graphqlMatch.element.id}`,
           toModule: `peer:${peer.peerName}::${graphqlMatch.peerModule.id}`,
+          operation: `GraphQL ${opName}`,
+          toModuleName: graphqlMatch.peerModule.name,
           detail: `GraphQL ${opName} -> ${graphqlMatch.peerModule.name}`,
           confidence: 'heuristic',
         });

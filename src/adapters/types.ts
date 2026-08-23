@@ -60,6 +60,21 @@ export interface RelationDescriptor {
   fromId: string;
   toId: string;
   toModule?: string;
+  /**
+   * Structured label for the API endpoint/operation this relation crosses (e.g.
+   * "REST GET /V1/carts/mine" or "GraphQL GetCart"), set by cross-stack (peer) `api-call`
+   * relations. Redundant with the prefix of `detail` for those relations, but kept as its own
+   * field so consumers — e.g. index.md's Integration surface table — don't need to re-parse the
+   * human-readable `detail` string.
+   */
+  operation?: string;
+  /**
+   * Human-readable display name of the relation's target module (e.g. a peer's Magento module
+   * name "Vendor_PeerModule"), set alongside `operation` by cross-stack `api-call` relations.
+   * Redundant with the suffix of `detail` for those relations, kept separate for the same reason
+   * as `operation`.
+   */
+  toModuleName?: string;
   detail?: string;
   confidence: RelationConfidence;
 }
