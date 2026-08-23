@@ -64,7 +64,12 @@ export async function collectModuleElements(
     files.push(file);
 
     const topDir = relPath.split('/')[0] as string;
-    const kind = KIND_BY_TOP_DIR[topDir] ?? 'unknown';
+    let kind = KIND_BY_TOP_DIR[topDir] ?? 'unknown';
+    // GraphQL resolvers live under Model/Resolver/ but are a distinct, more specific kind
+    // than the generic 'model' the top-dir lookup would otherwise assign.
+    if (relPath.startsWith('Model/Resolver/')) {
+      kind = 'resolver';
+    }
 
     elements.push({
       id: file.relPath,
@@ -119,6 +124,53 @@ async function crontabElement(moduleRootAbsPath: string, relPath: string): Promi
   return { id: file.relPath, kind: 'cron', name: 'crontab.xml', files: [file], summaryHints };
 }
 
+/** Extracts the source of a `type <typeName> { ... }` block (brace-balanced), or null if absent. */
+function extractTypeBlock(source: string, typeName: string): string | null {
+  const opener = new RegExp(`type\\s+${typeName}\\s*\\{`, 'm');
+  const match = opener.exec(source);
+  if (!match) return null;
+
+  const start = match.index + match[0].length;
+  let depth = 1;
+  let i = start;
+  while (i < source.length && depth > 0) {
+    if (source[i] === '{') depth++;
+    else if (source[i] === '}') depth--;
+    i++;
+  }
+  return source.slice(start, depth === 0 ? i - 1 : i);
+}
+
+/** Pulls field names out of a Query/Mutation block body, one per line (`fieldName(args): Type` or `fieldName: Type`). */
+function extractFieldNames(blockSource: string): string[] {
+  const names: string[] = [];
+  for (const rawLine of blockSource.split('\n')) {
+    const line = rawLine.split('#')[0]?.trim() ?? '';
+    if (!line) continue;
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*[:(]/.exec(line);
+    if (match) names.push(match[1] as string);
+  }
+  return names;
+}
+
+async function schemaGraphqlsElement(moduleRootAbsPath: string, relPath: string): Promise<ElementDescriptor | null> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(path.join(moduleRootAbsPath, relPath), 'utf8');
+  } catch {
+    return null;
+  }
+
+  const summaryHints: string[] = [];
+  for (const typeName of ['Query', 'Mutation']) {
+    const block = extractTypeBlock(raw, typeName);
+    if (block) summaryHints.push(...extractFieldNames(block));
+  }
+
+  const file = await buildSourceFileRef(moduleRootAbsPath, relPath);
+  return { id: file.relPath, kind: 'api', name: 'schema.graphqls', files: [file], summaryHints };
+}
+
 /**
  * Parses etc/webapi.xml and etc/crontab.xml into dedicated elements, exposes the remaining
  * recognized etc/*.xml config files as plain 'file' elements, and folds view/**\/*.{xml,phtml,js}
@@ -133,7 +185,7 @@ export async function collectModuleConfigElements(
   const files: SourceFileRef[] = [];
 
   const etcFiles = (
-    await fg(['etc/webapi.xml', 'etc/crontab.xml', ...PLAIN_CONFIG_FILES.map((f) => `etc/${f}`)], {
+    await fg(['etc/webapi.xml', 'etc/crontab.xml', 'etc/schema.graphqls', ...PLAIN_CONFIG_FILES.map((f) => `etc/${f}`)], {
       cwd: moduleRootAbsPath,
       onlyFiles: true,
       ignore: toExcludeGlobs(exclude),
@@ -147,6 +199,8 @@ export async function collectModuleConfigElements(
       element = await webapiElement(moduleRootAbsPath, relPath);
     } else if (base === 'crontab.xml') {
       element = await crontabElement(moduleRootAbsPath, relPath);
+    } else if (base === 'schema.graphqls') {
+      element = await schemaGraphqlsElement(moduleRootAbsPath, relPath);
     } else if (PLAIN_CONFIG_FILES.includes(base)) {
       const file = await buildSourceFileRef(moduleRootAbsPath, relPath);
       element = { id: file.relPath, kind: 'file', name: base, files: [file] };

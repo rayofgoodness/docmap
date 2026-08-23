@@ -1,0 +1,17 @@
+type Query {
+    moduleOneFoo(id: Int!): ModuleOneFoo @resolver(class: "Vendor\\ModuleOne\\Model\\Resolver\\FooResolver")
+    moduleOneFooList: [ModuleOneFoo] @resolver(class: "Vendor\\ModuleOne\\Model\\Resolver\\FooListResolver")
+}
+
+type Mutation {
+    createModuleOneFoo(input: ModuleOneFooInput!): ModuleOneFoo @resolver(class: "Vendor\\ModuleOne\\Model\\Resolver\\CreateFooResolver")
+}
+
+type ModuleOneFoo {
+    id: Int
+    name: String
+}
+
+input ModuleOneFooInput {
+    name: String
+}
