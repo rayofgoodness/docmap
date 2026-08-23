@@ -36,7 +36,7 @@ export async function collectModuleElements(
     const file: SourceFileRef = { absPath, relPath: toPosixPath(relPath), sizeBytes: stat.size };
     files.push(file);
 
-    const topDir = relPath.split(path.sep)[0] as string;
+    const topDir = relPath.split('/')[0] as string;
     const kind = KIND_BY_TOP_DIR[topDir] ?? 'unknown';
 
     elements.push({
