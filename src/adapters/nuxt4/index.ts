@@ -104,42 +104,57 @@ export const nuxt4Adapter: FrameworkAdapter = {
   name: 'nuxt4',
 
   async detect(ctx: DiscoveryContext): Promise<boolean> {
-    return (await findNuxtConfigPath(ctx.projectRoot)) !== null;
+    return (await findNuxtConfigPath(ctx.projectRoot, ctx.config.exclude)) !== null;
   },
 
   async discoverModules(ctx: DiscoveryContext): Promise<ModuleDescriptor[]> {
     const { projectRoot, config } = ctx;
-    const appRoot = await resolveAppRoot(projectRoot);
+
+    // The nuxt.config.* found here may live in a nested app directory (monorepo layout, e.g.
+    // apps/web/nuxt.config.ts) rather than at ctx.projectRoot. Everything below — appRoot
+    // resolution, category/server/shared/layer discovery — must operate relative to that config's
+    // own directory (the "effective root"), not ctx.projectRoot, which stays the monorepo root and
+    // is only used to locate the config in the first place.
+    const configPath = await findNuxtConfigPath(projectRoot, config.exclude);
+    const effectiveRoot = configPath ? path.dirname(configPath) : projectRoot;
+    if (configPath) {
+      const relRoot = effectiveRoot === projectRoot ? '.' : toPosixPath(path.relative(projectRoot, effectiveRoot));
+      ctx.logger.debug(
+        `nuxt4 adapter: using nuxt.config at ${toPosixPath(path.relative(projectRoot, configPath))} (effective root: ${relRoot})`,
+      );
+    }
+
+    const appRoot = await resolveAppRoot(effectiveRoot);
     const modules: ModuleDescriptor[] = [];
 
     for (const category of APP_CATEGORIES) {
       const module = await buildCategoryModule(
         category,
         path.join(appRoot, category.dirName),
-        projectRoot,
+        effectiveRoot,
         config.exclude,
         config.include,
       );
       if (module) modules.push(module);
     }
 
-    const appRootModule = await buildAppRootModule(appRoot, projectRoot);
+    const appRootModule = await buildAppRootModule(appRoot, effectiveRoot);
     if (appRootModule) modules.push(appRootModule);
 
     const serverModule = await buildServerModule(
-      path.join(projectRoot, 'server'),
-      projectRoot,
+      path.join(effectiveRoot, 'server'),
+      effectiveRoot,
       config.exclude,
       config.include,
     );
     if (serverModule) modules.push(serverModule);
 
     // shared/ is Nuxt 4's official directory for code shared between app/ and server/, so it lives
-    // at the project root rather than under appRoot.
+    // at the effective root rather than under appRoot.
     const sharedModule = await buildCategoryModule(
       SHARED_CATEGORY,
-      path.join(projectRoot, 'shared'),
-      projectRoot,
+      path.join(effectiveRoot, 'shared'),
+      effectiveRoot,
       config.exclude,
       config.include,
     );
@@ -147,7 +162,6 @@ export const nuxt4Adapter: FrameworkAdapter = {
 
     const layerPaths = new Map<string, string>(); // normalized path -> original relative path
 
-    const configPath = await findNuxtConfigPath(projectRoot);
     if (configPath) {
       const configSource = await fs.readFile(configPath, 'utf8');
       for (const layer of findExtendsLayers(configSource)) {
@@ -158,13 +172,13 @@ export const nuxt4Adapter: FrameworkAdapter = {
     // Nuxt 4 auto-registers every subdirectory of layers/ as a layer, without needing an
     // explicit extends entry in nuxt.config — so discover those alongside whatever extends lists.
     // A layer that's both auto-registered and explicitly listed in extends must not be added twice.
-    for (const autoLayer of await findAutoLayers(projectRoot)) {
+    for (const autoLayer of await findAutoLayers(effectiveRoot)) {
       const normalized = normalizeLayerPath(autoLayer);
       if (!layerPaths.has(normalized)) layerPaths.set(normalized, autoLayer);
     }
 
     for (const layer of layerPaths.values()) {
-      const layerModules = await buildLayerModules(layer, projectRoot, config.exclude, config.include);
+      const layerModules = await buildLayerModules(layer, effectiveRoot, config.exclude, config.include);
       modules.push(...layerModules);
     }
 
@@ -172,8 +186,10 @@ export const nuxt4Adapter: FrameworkAdapter = {
   },
 
   async resolveRelations(modules: ModuleDescriptor[], ctx: DiscoveryContext): Promise<RelationDescriptor[]> {
-    const appRoot = await resolveAppRoot(ctx.projectRoot);
-    const relations = await resolveNuxt4Relations(modules, appRoot, ctx.projectRoot);
+    const configPath = await findNuxtConfigPath(ctx.projectRoot, ctx.config.exclude);
+    const effectiveRoot = configPath ? path.dirname(configPath) : ctx.projectRoot;
+    const appRoot = await resolveAppRoot(effectiveRoot);
+    const relations = await resolveNuxt4Relations(modules, appRoot, effectiveRoot);
     ctx.logger.debug(`nuxt4 adapter: resolved ${relations.length} cross-module relations`);
     return relations;
   },

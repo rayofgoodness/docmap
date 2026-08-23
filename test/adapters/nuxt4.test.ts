@@ -9,6 +9,10 @@ import type { DiscoveryContext } from '../../src/adapters/types.js';
 
 const FIXTURE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../fixtures/nuxt4-fake');
 const GENERIC_FIXTURE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../fixtures/generic-fake');
+const MONOREPO_FIXTURE_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../fixtures/nuxt4-monorepo-fake',
+);
 
 function makeContext(projectRoot = FIXTURE_ROOT): DiscoveryContext {
   return { projectRoot, config: getDefaultConfig(), logger: createLogger() };
@@ -21,6 +25,20 @@ describe('nuxt4Adapter', () => {
 
   it('does not detect a plain generic project', async () => {
     await expect(nuxt4Adapter.detect(makeContext(GENERIC_FIXTURE_ROOT))).resolves.toBe(false);
+  });
+
+  it('detects a monorepo project whose nuxt.config.ts is nested under apps/web/', async () => {
+    // No nuxt.config.ts at the monorepo root — only under apps/web/ — so detection must fall
+    // through to the nested-glob search rather than failing outright.
+    await expect(nuxt4Adapter.detect(makeContext(MONOREPO_FIXTURE_ROOT))).resolves.toBe(true);
+  });
+
+  it('discovers the nested app pages module relative to the nested nuxt.config.ts, not the monorepo root', async () => {
+    const modules = await nuxt4Adapter.discoverModules(makeContext(MONOREPO_FIXTURE_ROOT));
+    const pages = modules.find((m) => m.id === 'pages');
+    expect(pages?.elements.map((e) => e.name)).toEqual(['home.vue']);
+    // relRootPath is relative to the effective (nested) app root, not the monorepo root.
+    expect(pages?.relRootPath).toBe('app/pages');
   });
 
   it('discovers one module per present category plus server, including structured layer sub-modules', async () => {

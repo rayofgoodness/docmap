@@ -1,9 +1,24 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import fg from 'fast-glob';
+import { toExcludeGlobs } from '../../utils/pathFilter.js';
 
 const CONFIG_FILENAMES = ['nuxt.config.ts', 'nuxt.config.js', 'nuxt.config.mjs', 'nuxt.config.mts'];
+const CONFIG_GLOB = 'nuxt.config.{ts,js,mjs,mts}';
 
-export async function findNuxtConfigPath(projectRoot: string): Promise<string | null> {
+// Monorepos commonly nest the Nuxt app (and therefore its config) a directory or two below the
+// repo root — e.g. `apps/web/nuxt.config.ts` or `web/nuxt.config.ts`. Only these two shallow shapes
+// are searched (depth <= 2); a config nested any deeper falls back to the generic adapter, same as
+// today. Full multi-app-in-one-repo support (picking the *right* app among several) is out of scope
+// here — see iteration 4's "peers" concept for that.
+const NESTED_CONFIG_GLOBS = [`*/${CONFIG_GLOB}`, `apps/*/${CONFIG_GLOB}`];
+
+/**
+ * Finds the path to the project's nuxt.config.*, checking the project root first and then a couple
+ * of common monorepo layouts (see NESTED_CONFIG_GLOBS). When multiple nested configs match, the
+ * first in sorted order is used — a deliberate minimal choice, not real multi-app disambiguation.
+ */
+export async function findNuxtConfigPath(projectRoot: string, exclude: string[] = []): Promise<string | null> {
   for (const filename of CONFIG_FILENAMES) {
     const candidate = path.join(projectRoot, filename);
     try {
@@ -13,7 +28,15 @@ export async function findNuxtConfigPath(projectRoot: string): Promise<string | 
       // try next candidate
     }
   }
-  return null;
+
+  const matches = await fg(NESTED_CONFIG_GLOBS, {
+    cwd: projectRoot,
+    ignore: toExcludeGlobs(exclude),
+    onlyFiles: true,
+  });
+  if (matches.length === 0) return null;
+  const [first] = matches.sort();
+  return first ? path.join(projectRoot, first) : null;
 }
 
 /** Resolves Nuxt 4's default app-code root: `app/` if present, else the project root (legacy layout). */
