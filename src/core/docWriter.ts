@@ -2,9 +2,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { ElementDescriptor, ModuleDescriptor } from '../adapters/types.js';
 import {
+  BriefFrontmatterSchema,
   ElementFrontmatterSchema,
   IndexFrontmatterSchema,
   ModuleFrontmatterSchema,
+  type BriefFrontmatter,
   type ElementFrontmatter,
   type IndexFrontmatter,
   type ModuleFrontmatter,
@@ -40,6 +42,15 @@ export function getElementDocPath(
 
 export function getIndexDocPath(projectRoot: string): string {
   return path.join(getDocmapRoot(projectRoot), 'index.md');
+}
+
+/**
+ * Business briefs live under `.docmap/business/<module.relRootPath>.md` — a single file per module
+ * (not a per-module directory with README.md, unlike the tech doc layout), mirroring the plan's literal
+ * path.
+ */
+export function getBriefDocPath(projectRoot: string, module: Pick<ModuleDescriptor, 'relRootPath'>): string {
+  return safeJoin(getDocmapRoot(projectRoot), path.join('business', `${module.relRootPath}.md`));
 }
 
 export function getModuleHistoryDir(projectRoot: string, module: Pick<ModuleDescriptor, 'relRootPath'>): string {
@@ -135,4 +146,25 @@ export async function readModuleDoc(
   }
 }
 
-export { ElementFrontmatterSchema, IndexFrontmatterSchema, ModuleFrontmatterSchema, parseDoc };
+export async function writeBriefDoc(
+  projectRoot: string,
+  module: Pick<ModuleDescriptor, 'relRootPath'>,
+  frontmatter: BriefFrontmatter,
+  body: string,
+): Promise<void> {
+  await atomicWrite(getBriefDocPath(projectRoot, module), renderDoc(frontmatter, body));
+}
+
+export async function readBriefDoc(
+  projectRoot: string,
+  module: Pick<ModuleDescriptor, 'relRootPath'>,
+): Promise<{ frontmatter: BriefFrontmatter; body: string } | null> {
+  try {
+    const raw = await fs.readFile(getBriefDocPath(projectRoot, module), 'utf8');
+    return tryParseDoc(BriefFrontmatterSchema, raw);
+  } catch {
+    return null;
+  }
+}
+
+export { BriefFrontmatterSchema, ElementFrontmatterSchema, IndexFrontmatterSchema, ModuleFrontmatterSchema, parseDoc };

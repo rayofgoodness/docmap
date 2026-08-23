@@ -2,7 +2,7 @@ import type { DiscoveryContext } from '../adapters/types.js';
 import { loadConfig } from '../config/load.js';
 import { discoverProject } from '../core/discovery.js';
 import { computeModuleFingerprint } from '../core/fingerprint.js';
-import { readModuleDoc } from '../core/docWriter.js';
+import { readBriefDoc, readModuleDoc } from '../core/docWriter.js';
 import { createLogger } from '../utils/logger.js';
 import { createConcurrencyLimiter } from '../core/concurrency.js';
 
@@ -20,6 +20,11 @@ export interface ModuleStatusReport {
   moduleId: string;
   name: string;
   status: DocStatus;
+  /** Status of the localized business brief (`docmap brief`) for this module — 'missing' when no brief
+   * file exists yet; 'up-to-date' when the brief's source_fingerprint matches the tech doc's current
+   * fingerprint AND the tech doc itself is up to date; 'stale' otherwise (the brief doesn't match its
+   * tech doc, or the tech doc itself changed since). */
+  briefStatus: DocStatus;
 }
 
 export async function statusCommand(options: StatusOptions): Promise<void> {
@@ -43,7 +48,21 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
           const fingerprint = await computeModuleFingerprint(module);
           status = existing.frontmatter.fingerprint === fingerprint ? 'up-to-date' : 'stale';
         }
-        return { moduleId: module.id, name: module.name, status };
+
+        const briefDoc = await readBriefDoc(options.projectRoot, module);
+        let briefStatus: DocStatus;
+        if (!briefDoc) {
+          briefStatus = 'missing';
+        } else if (!existing) {
+          // A brief exists but its tech doc doesn't (orphaned) — nothing it could validly match.
+          briefStatus = 'stale';
+        } else {
+          const techFingerprint = existing.frontmatter.fingerprint ?? null;
+          const matchesTechDoc = briefDoc.frontmatter.source_fingerprint === techFingerprint;
+          briefStatus = matchesTechDoc && status === 'up-to-date' ? 'up-to-date' : 'stale';
+        }
+
+        return { moduleId: module.id, name: module.name, status, briefStatus };
       }),
     ),
   );
@@ -54,6 +73,6 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   }
 
   for (const r of reports) {
-    logger.info(`${r.status.padEnd(12)} ${r.name} (${r.moduleId})`);
+    logger.info(`${r.status.padEnd(12)} ${r.briefStatus.padEnd(12)} ${r.name} (${r.moduleId})`);
   }
 }

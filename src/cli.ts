@@ -6,6 +6,7 @@ import { scanCommand } from './commands/scan.js';
 import { generateCommand } from './commands/generate.js';
 import { statusCommand } from './commands/status.js';
 import { verifyCommand } from './commands/verify.js';
+import { briefCommand } from './commands/brief.js';
 import { initCommand } from './commands/init.js';
 import { installSkillsCommand, type SkillAgent } from './commands/installSkills.js';
 import { cleanCommand } from './commands/clean.js';
@@ -102,6 +103,25 @@ program
       skill: opts.skill,
       since: opts.since,
       against: opts.against,
+    });
+  });
+
+program
+  .command('brief')
+  .description('Generate localized business briefs (for managers/QA) from existing tech docs, traced to invariants')
+  .option('--module <id>', 'target a specific module id (repeatable)', (val, prev: string[]) => [...prev, val], [])
+  .option('--runner <name>', 'agent runner: claude|codex|gemini|mock')
+  .option('--lang <lang>', 'documentation language')
+  .option('--dir <path>', 'restrict scanning to a subdirectory of the project')
+  .option('--framework <framework>', 'force a framework adapter')
+  .action(async (opts) => {
+    await briefCommand({
+      projectRoot: process.cwd(),
+      module: opts.module?.length ? opts.module : undefined,
+      runner: opts.runner as RunnerName | undefined,
+      lang: opts.lang,
+      dir: opts.dir,
+      framework: opts.framework,
     });
   });
 

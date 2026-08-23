@@ -78,3 +78,14 @@ export const IndexFrontmatterSchema = z.object({
   ),
 });
 export type IndexFrontmatter = z.infer<typeof IndexFrontmatterSchema>;
+
+export const BriefFrontmatterSchema = z.object({
+  docmap_version: z.literal(1),
+  kind: z.literal('brief'),
+  module: z.string(),
+  language: z.string(),
+  source_fingerprint: z.string().nullable(),
+  generated_at: z.string(),
+  generated_by: GeneratedBySchema,
+});
+export type BriefFrontmatter = z.infer<typeof BriefFrontmatterSchema>;

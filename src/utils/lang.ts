@@ -5,6 +5,11 @@ export interface SectionLabels {
   invariants: string;
   inputsOutputs: string;
   relationships: string;
+  briefWhatItDoes: string;
+  briefKeyScenarios: string;
+  briefBusinessRules: string;
+  briefWhatToCheck: string;
+  briefDependencyRisks: string;
 }
 
 const CATALOG: Record<string, SectionLabels> = {
@@ -15,6 +20,11 @@ const CATALOG: Record<string, SectionLabels> = {
     invariants: 'Invariants',
     inputsOutputs: 'Inputs / Outputs',
     relationships: 'Relationships',
+    briefWhatItDoes: 'What this module does',
+    briefKeyScenarios: 'Key scenarios',
+    briefBusinessRules: 'Business rules',
+    briefWhatToCheck: 'What to check after changes',
+    briefDependencyRisks: 'Dependency risks',
   },
   uk: {
     purpose: 'Призначення',
@@ -23,6 +33,11 @@ const CATALOG: Record<string, SectionLabels> = {
     invariants: 'Інваріанти',
     inputsOutputs: 'Входи / Виходи',
     relationships: 'Звʼязки',
+    briefWhatItDoes: 'Що робить модуль',
+    briefKeyScenarios: 'Ключові сценарії',
+    briefBusinessRules: 'Бізнес-правила',
+    briefWhatToCheck: 'Що перевірити після змін',
+    briefDependencyRisks: 'Ризики залежностей',
   },
 };
 
