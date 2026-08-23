@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:module:Magento_Webapi:etc/webapi.xsd">
+    <route url="/V1/moduleone/foo" method="GET">
+        <service class="Vendor\ModuleOne\Api\FooRepositoryInterface" method="getList"/>
+        <resources>
+            <resource ref="anonymous"/>
+        </resources>
+    </route>
+    <route url="/V1/moduleone/foo/:id" method="POST">
+        <service class="Vendor\ModuleOne\Api\FooRepositoryInterface" method="save"/>
+        <resources>
+            <resource ref="Vendor_ModuleOne::foo"/>
+        </resources>
+    </route>
+</routes>

@@ -54,7 +54,7 @@ describe('magento2Adapter', () => {
     const modules = await magento2Adapter.discoverModules(makeContext());
     const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;
     const kinds = moduleOne.elements.map((e) => e.kind).sort();
-    expect(kinds).toEqual(['cron', 'model', 'observer', 'plugin']);
+    expect(kinds).toEqual(['api', 'cron', 'cron', 'model', 'observer', 'plugin']);
   });
 
   it('classifies Cron/Job.php as kind cron', async () => {
@@ -62,6 +62,25 @@ describe('magento2Adapter', () => {
     const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;
     const cronElement = moduleOne.elements.find((e) => e.id === 'Cron/Job.php');
     expect(cronElement).toMatchObject({ kind: 'cron', name: 'Job' });
+  });
+
+  it('parses etc/webapi.xml into a kind api element with route summaryHints', async () => {
+    const modules = await magento2Adapter.discoverModules(makeContext());
+    const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;
+    const webapiElement = moduleOne.elements.find((e) => e.id === 'etc/webapi.xml');
+    expect(webapiElement).toMatchObject({ kind: 'api', name: 'webapi.xml' });
+    expect(webapiElement?.summaryHints).toEqual([
+      'GET /V1/moduleone/foo',
+      'POST /V1/moduleone/foo/:id',
+    ]);
+  });
+
+  it('parses etc/crontab.xml into a kind cron element with job summaryHints', async () => {
+    const modules = await magento2Adapter.discoverModules(makeContext());
+    const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;
+    const crontabElement = moduleOne.elements.find((e) => e.id === 'etc/crontab.xml');
+    expect(crontabElement).toMatchObject({ kind: 'cron', name: 'crontab.xml' });
+    expect(crontabElement?.summaryHints).toEqual(['vendor_moduleone_job (*/5 * * * *)']);
   });
 
   it('resolves deterministic di.xml preference and plugin relations across modules', async () => {

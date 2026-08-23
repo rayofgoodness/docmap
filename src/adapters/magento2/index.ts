@@ -4,7 +4,7 @@ import { toPosixPath } from '../../utils/fsSafe.js';
 import { slugify } from '../../utils/slug.js';
 import { detectMagento2, findModuleDirs } from './detect.js';
 import { readModuleName } from './moduleXml.js';
-import { collectModuleElements } from './elements.js';
+import { collectModuleConfigElements, collectModuleElements } from './elements.js';
 import { buildNamespaceMap } from './namespace.js';
 import { resolveMagento2XmlRelations } from './di.js';
 import { resolvePhpUseRelations } from './phpImports.js';
@@ -28,6 +28,7 @@ export const magento2Adapter: FrameworkAdapter = {
       const magentoModuleName = declaredName ?? `${parentDirName}_${ownDirName}`;
 
       const { elements, files } = await collectModuleElements(dir.absPath, config.exclude, config.include);
+      const configResult = await collectModuleConfigElements(dir.absPath, config.exclude, config.include);
 
       modules.push({
         id: slugify(magentoModuleName),
@@ -35,9 +36,9 @@ export const magento2Adapter: FrameworkAdapter = {
         rootPath: dir.absPath,
         relRootPath: toPosixPath(dir.relPath),
         framework: 'magento2',
-        elements,
+        elements: [...elements, ...configResult.elements],
         relations: [],
-        files,
+        files: [...files, ...configResult.files],
         metadata: { magentoModuleName },
       });
     }
