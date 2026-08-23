@@ -65,6 +65,13 @@ function stripExt(absPath: string): string {
   return absPath.replace(/\.(js|ts|jsx|tsx|vue|mjs|cjs)$/, '');
 }
 
+/** Normalizes a store id or call-site name for matching: lowercases and strips `-`/`_` so a
+ * kebab-case `defineStore('checkout-payment')` matches the auto-imported call-site name
+ * `useCheckoutPaymentStore()`, whose PascalCase segment lowercases to `checkoutpayment`. */
+function normalizeStoreKey(s: string): string {
+  return s.toLowerCase().replace(/[-_]/g, '');
+}
+
 function extractDefaultImportBindings(source: string): Map<string, string> {
   const bindings = new Map<string, string>();
   const pattern = /import\s+([A-Za-z_$][\w$]*)\s+from\s*['"]([^'"]+)['"]/g;
@@ -90,7 +97,7 @@ export async function resolveVue3Relations(
       try {
         const content = await fs.readFile(file.absPath, 'utf8');
         const match = content.match(DEFINE_STORE_PATTERN);
-        if (match?.[1]) storeIdByLowerName.set(match[1].toLowerCase(), element.id);
+        if (match?.[1]) storeIdByLowerName.set(normalizeStoreKey(match[1]), element.id);
       } catch {
         // unreadable store file — skip
       }
@@ -130,7 +137,7 @@ export async function resolveVue3Relations(
         STORE_CALL_PATTERN.lastIndex = 0;
         let storeMatch: RegExpExecArray | null;
         while ((storeMatch = STORE_CALL_PATTERN.exec(source)) !== null) {
-          const candidate = storeMatch[1]?.toLowerCase();
+          const candidate = storeMatch[1] ? normalizeStoreKey(storeMatch[1]) : undefined;
           const storeElementId = candidate ? storeIdByLowerName.get(candidate) : undefined;
           if (!storeElementId) continue;
           // An explicit `import ... from '@/stores/x'` already recorded the same dependency above —

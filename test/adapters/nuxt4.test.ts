@@ -173,4 +173,15 @@ describe('nuxt4Adapter', () => {
     const types = pages.relations.map((r) => `${r.type}->${r.toModule}`).sort();
     expect(types).toEqual(['api-call->server', 'import->components', 'import->composables', 'store->stores']);
   });
+
+  it('matches a kebab-case defineStore id against its PascalCase auto-import call site', async () => {
+    // stores/checkoutPayment.ts declares defineStore('checkout-payment', ...); the plugin calls
+    // useCheckoutPaymentStore() with no explicit import. Naive lowercasing alone would compare
+    // "checkout-payment" against "checkoutpayment" and never match — both sides must also strip
+    // the hyphen.
+    const { modules } = await discoverProject(makeContext());
+    const plugins = modules.find((m) => m.id === 'plugins')!;
+    const storeRelation = plugins.relations.find((r) => r.toModule === 'stores' && r.type === 'store');
+    expect(storeRelation).toMatchObject({ detail: 'useCheckoutPaymentStore()', confidence: 'heuristic' });
+  });
 });

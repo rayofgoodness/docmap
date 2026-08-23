@@ -1,3 +1,4 @@
 export default defineNuxtPlugin(() => {
-  console.log('analytics plugin initialized');
+  const checkoutPayment = useCheckoutPaymentStore();
+  console.log('analytics plugin initialized', checkoutPayment.method);
 });

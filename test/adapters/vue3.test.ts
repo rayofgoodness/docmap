@@ -66,4 +66,17 @@ describe('vue3Adapter', () => {
     expect(routeRelations).toHaveLength(2);
     expect(routeRelations.every((r) => r.toModule === 'views')).toBe(true);
   });
+
+  it('matches a kebab-case defineStore id against its PascalCase auto-import call site', async () => {
+    // stores/checkoutPayment.ts declares defineStore('checkout-payment', ...); CheckoutPaymentView.vue
+    // calls useCheckoutPaymentStore() with no explicit import. Naive lowercasing alone would compare
+    // "checkout-payment" against "checkoutpayment" and never match — both sides must also strip
+    // the hyphen.
+    const { modules } = await discoverProject(makeContext());
+    const views = modules.find((m) => m.id === 'views')!;
+    const storeRelation = views.relations.find(
+      (r) => r.toModule === 'stores' && r.type === 'store' && r.detail === 'useCheckoutPaymentStore()',
+    );
+    expect(storeRelation).toMatchObject({ detail: 'useCheckoutPaymentStore()', confidence: 'heuristic' });
+  });
 });
