@@ -107,6 +107,40 @@ docmap scan --dir app/pages  # only look inside app/pages
 docmap scan --framework magento2   # override auto-detection
 ```
 
+#### `scan --json` output contract
+
+`scan --json`'s output is a **stable, versioned, public contract** for
+external tooling (CI bots, dashboards, scripts) to build against — it is
+not just a dump of docmap's internal data structures, which are free to
+change shape between releases. Breaking changes bump `schema_version`.
+
+```jsonc
+{
+  "schema_version": 1,
+  "framework": "nuxt4",
+  "modules": [
+    {
+      "id": "moduleA",
+      "name": "moduleA",
+      "path": "app/moduleA",       // project-root-relative
+      "elements": [
+        { "id": "moduleA::index", "kind": "component", "files": ["app/moduleA/index.ts"] }
+      ],
+      "relations": [
+        { "type": "import", "fromId": "moduleA::index", "toId": "moduleB::helper", "toModule": "moduleB", "detail": "...", "confidence": "heuristic" }
+      ]
+    }
+  ]
+}
+```
+
+Every path in this output — `modules[].path`, `elements[].files[]` — is
+**project-root-relative (`relPath`)**. Absolute filesystem paths
+(`absPath`) are intentionally never included, so the output is safe to
+share outside the machine it was generated on and stable across
+checkouts at different locations. Treat `relPath`-style paths as
+relative to the project root you ran `docmap scan` from.
+
 ### `docmap generate`
 
 The full pipeline: discovery, then one AI agent call per module (not per

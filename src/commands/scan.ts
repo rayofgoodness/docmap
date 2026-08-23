@@ -1,6 +1,7 @@
 import type { DiscoveryContext } from '../adapters/types.js';
 import { loadConfig } from '../config/load.js';
 import { discoverProject } from '../core/discovery.js';
+import { toScanContract } from '../core/scanContract.js';
 import { createLogger } from '../utils/logger.js';
 
 export interface ScanOptions {
@@ -24,7 +25,7 @@ export async function scanCommand(options: ScanOptions): Promise<void> {
   const { frameworkName, modules } = await discoverProject(ctx);
 
   if (options.json) {
-    console.log(JSON.stringify({ framework: frameworkName, modules }, null, 2));
+    console.log(JSON.stringify(toScanContract(frameworkName, modules), null, 2));
     return;
   }
 
