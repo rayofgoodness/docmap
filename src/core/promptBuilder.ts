@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import type { ElementDescriptor, ModuleDescriptor, RelationDescriptor, SourceFileRef } from '../adapters/types.js';
 import type { ResolvedDocmapConfig } from '../config/schema.js';
 import { BODY_END, BODY_START, ELEMENT_END, elementStartMarker } from './markers.js';
+import { getSectionLabels } from '../utils/lang.js';
 
 export async function readExcerpt(absPath: string, maxBytes: number): Promise<string> {
   try {
@@ -114,6 +115,7 @@ export async function buildModulePrompt(
   batch: PromptBatch,
   instructions?: string,
 ): Promise<string> {
+  const labels = getSectionLabels(config.language);
   const files = collectFiles(batch.elements).slice(0, config.maxFilesPerPrompt);
   const excerpts = await Promise.all(
     files.map(async (f) => ({
@@ -135,7 +137,7 @@ export async function buildModulePrompt(
   ].join('\n');
 
   const invariantsGuidance = [
-    'The "## Invariants" section of the module overview block must be a NUMBERED markdown list (1. , 2. , ...).',
+    `The "## ${labels.invariants}" section of the module overview block must be a NUMBERED markdown list (1. , 2. , ...).`,
     'Each item is a single, concrete, verifiable business rule stated as a testable claim, e.g. "An order can only be cancelled while its status is pending or on-hold" or "A discount never exceeds 50% of the item price".',
     'Ground every item strictly in what the source code actually does — never invent a rule that is not visibly enforced by the code.',
     'Never write a vague item like "the system validates input" — name the actual rule and its boundary condition.',
@@ -143,7 +145,7 @@ export async function buildModulePrompt(
 
   const outputContract = batch.includeBody
     ? [
-        `1. One module overview block: ${BODY_START}\\n## Purpose\\n...\\n## Responsibilities\\n...\\n## Business Logic\\n...\\n## Invariants\\n...\\n## Inputs / Outputs\\n...\\n## Relationships\\n...\\n${BODY_END}`,
+        `1. One module overview block: ${BODY_START}\\n## ${labels.purpose}\\n...\\n## ${labels.responsibilities}\\n...\\n## ${labels.businessLogic}\\n...\\n## ${labels.invariants}\\n...\\n## ${labels.inputsOutputs}\\n...\\n## ${labels.relationships}\\n...\\n${BODY_END}`,
         `2. One block per element listed above: ${elementStartMarker('<element id>')}\\n...\\n${ELEMENT_END}`,
         elementTemplate,
         invariantsGuidance,

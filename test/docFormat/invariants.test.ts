@@ -48,6 +48,21 @@ describe('parseInvariantsSection', () => {
     ]);
   });
 
+  it('stops at an indented "##" heading rather than swallowing it as list content', () => {
+    const body = [
+      '## Invariants',
+      '1. Rule one.',
+      '2. Rule two.',
+      '  ## Inputs / Outputs',
+      '1. This looks like a list item but belongs to a different section.',
+    ].join('\n');
+
+    expect(parseInvariantsSection(body, 'Invariants')).toEqual([
+      { id: 'I1', text: 'Rule one.' },
+      { id: 'I2', text: 'Rule two.' },
+    ]);
+  });
+
   it('works for the Ukrainian heading text', () => {
     const body = [
       '## Бізнес-логіка',

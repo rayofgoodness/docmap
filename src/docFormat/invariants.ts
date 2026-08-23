@@ -22,7 +22,7 @@ export function parseInvariantsSection(body: string, headingText: string): Parse
   let n = 0;
   for (let i = startIndex + 1; i < lines.length; i++) {
     const line = lines[i]!;
-    if (line.startsWith('## ')) break;
+    if (line.trim().startsWith('## ')) break;
     const match = NUMBERED_ITEM.exec(line.trim());
     if (match) {
       n += 1;

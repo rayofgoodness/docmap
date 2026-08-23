@@ -90,17 +90,17 @@ export async function snapshotModuleDocHistory(
   projectRoot: string,
   module: Pick<ModuleDescriptor, 'relRootPath'>,
   historyKeep: number,
+  preReadRaw?: string | null,
 ): Promise<void> {
   if (historyKeep <= 0) return;
 
-  const docPath = getModuleDocPath(projectRoot, module);
-  let raw: string;
-  try {
-    raw = await fs.readFile(docPath, 'utf8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
-    throw err;
+  let raw: string | null;
+  if (preReadRaw !== undefined) {
+    raw = preReadRaw;
+  } else {
+    raw = await readModuleDocRaw(projectRoot, module);
   }
+  if (raw === null) return;
 
   const parsed = tryParseDoc(ModuleFrontmatterSchema, raw);
   const generatedAt = parsed?.frontmatter.generated_at ?? new Date().toISOString();
@@ -144,16 +144,24 @@ export async function writeIndexDoc(
   await atomicWrite(getIndexDocPath(projectRoot), renderDoc(frontmatter, body));
 }
 
+export async function readModuleDocRaw(
+  projectRoot: string,
+  module: Pick<ModuleDescriptor, 'relRootPath'>,
+): Promise<string | null> {
+  try {
+    return await fs.readFile(getModuleDocPath(projectRoot, module), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 export async function readModuleDoc(
   projectRoot: string,
   module: Pick<ModuleDescriptor, 'relRootPath'>,
 ): Promise<{ frontmatter: ModuleFrontmatter; body: string } | null> {
-  try {
-    const raw = await fs.readFile(getModuleDocPath(projectRoot, module), 'utf8');
-    return tryParseDoc(ModuleFrontmatterSchema, raw);
-  } catch {
-    return null;
-  }
+  const raw = await readModuleDocRaw(projectRoot, module);
+  if (raw === null) return null;
+  return tryParseDoc(ModuleFrontmatterSchema, raw);
 }
 
 export async function writeBriefDoc(

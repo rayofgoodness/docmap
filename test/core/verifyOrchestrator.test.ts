@@ -178,6 +178,26 @@ describe('verifyModule', () => {
     expect(report.verdict).toBeUndefined();
     expect(report.error).toBeTruthy();
   });
+
+  it('reports the DOUBLED (escalated) timeout in the failure reason, not the original config timeout', async () => {
+    const module = await makeModule();
+    await writeModuleDoc(tmpDir, module, makeFrontmatter({ fingerprint: 'sha256:stale-marker' }), '## Business Logic\nOrders.');
+
+    // First attempt looks like a timeout at the original 1000ms budget (ok:false, durationMs close to
+    // timeoutMs) — that escalates the retry's timeout to 2000ms. The second attempt then fails again
+    // (still not a valid parse), exhausting maxRetries:1, so runVerifyCall/verifyModule must describe
+    // the failure using the LAST attempt's actual (doubled) budget, not the original 1000ms.
+    const { runner } = fakeRunner([
+      runnerResult({ ok: false, durationMs: 980, exitCode: null }),
+      runnerResult({ ok: false, durationMs: 1900, exitCode: null }),
+    ]);
+    const report = await callVerifyModule(module, runner, { timeoutMs: 1000, maxRetries: 1 });
+
+    expect(report.status).toBe('verified');
+    expect(report.error).toBeTruthy();
+    expect(report.error).toContain('2s limit');
+    expect(report.error).not.toContain('1s limit');
+  });
 });
 
 function fakeModule(id: string, relRootPath: string): ModuleDescriptor {
@@ -239,9 +259,9 @@ describe('writeVerifyReport', () => {
       breakingCheckoutReport,
     ];
 
-    const filePath = await writeVerifyReport(tmpDir, reports, new Date(2026, 0, 15, 9, 5));
+    const filePath = await writeVerifyReport(tmpDir, reports, new Date(2026, 0, 15, 9, 5, 42));
 
-    expect(filePath).toBe(path.join(tmpDir, '.docmap', '.reports', 'verify-2026-01-15-0905.md'));
+    expect(filePath).toBe(path.join(tmpDir, '.docmap', '.reports', 'verify-2026-01-15-090542.md'));
     const content = await fs.readFile(filePath, 'utf8');
     expect(content).toContain('| orders (orders) | unchanged | - |');
     expect(content).toContain('| checkout (checkout) | verified | BREAKING |');
@@ -289,5 +309,29 @@ describe('writeVerifyReport', () => {
     expect(content).toContain('### checkout (checkout) — BREAKING');
     expect(content).toContain('I1: VIOLATED — no longer enforced.');
     expect(content).toContain('New auto-refund path.');
+  });
+
+  it('sanitizes a report.error containing a newline and a pipe so the summary table row stays well-formed', async () => {
+    const reports: VerifyModuleReport[] = [
+      {
+        moduleId: 'orders',
+        name: 'orders',
+        status: 'verified',
+        error: 'runner failed: stderr line one\nstderr line two | with a pipe',
+      },
+    ];
+
+    const filePath = await writeVerifyReport(tmpDir, reports, new Date(2026, 0, 15, 9, 8, 0));
+    const content = await fs.readFile(filePath, 'utf8');
+
+    // The report has exactly one summary row per input report — a raw newline in r.error would have
+    // split it across multiple physical lines, so this lookup alone proves the row stayed intact.
+    const rows = content.split('\n').filter((l) => l.startsWith('| orders (orders)'));
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    // The literal "|" from the error text must have been escaped (backslash-pipe), not left bare —
+    // a bare pipe would open an unintended 4th table column.
+    expect(row).toContain('stderr line one stderr line two \\| with a pipe');
+    expect(row).not.toContain('\n');
   });
 });

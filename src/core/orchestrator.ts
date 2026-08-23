@@ -20,13 +20,19 @@ import { buildIndexBody } from '../docFormat/templates/index.js';
 import {
   getDocmapRoot,
   readModuleDoc,
+  readModuleDocRaw,
   snapshotModuleDocHistory,
   writeElementDoc,
   writeIndexDoc,
   writeModuleDoc,
 } from './docWriter.js';
-import type { ElementFrontmatter, ModuleFrontmatter } from '../docFormat/frontmatter.js';
+import { tryParseDoc } from '../docFormat/parse.js';
 import type { AgentRunner, RunnerResult } from '../runners/types.js';
+import {
+  ModuleFrontmatterSchema,
+  type ElementFrontmatter,
+  type ModuleFrontmatter,
+} from '../docFormat/frontmatter.js';
 
 export type ModuleOutcome = 'generated' | 'skipped-up-to-date' | 'dry-run' | 'error';
 
@@ -231,8 +237,10 @@ async function processModule(args: {
   const { module, projectRoot, config, logger, runner, runnerName, force, dryRun, instructions, progress } = args;
   const fingerprint = await computeModuleFingerprint(module);
 
+  let existingRaw: string | null | undefined;
   if (!force) {
-    const existing = await readModuleDoc(projectRoot, module);
+    existingRaw = await readModuleDocRaw(projectRoot, module);
+    const existing = existingRaw !== null ? tryParseDoc(ModuleFrontmatterSchema, existingRaw) : null;
     if (existing?.frontmatter.fingerprint === fingerprint && existing.frontmatter.language === config.language) {
       logger.info(`[skip] ${module.id} — up to date`);
       return { moduleId: module.id, outcome: 'skipped-up-to-date' };
@@ -309,6 +317,7 @@ async function processModule(args: {
     runnerName,
     fingerprint,
     parsed: { body: moduleBody, elements: mergedElements },
+    existingRaw,
   });
   logger.info(`[ok] ${module.id} — generated${batches.length > 1 ? ` (${batches.length} batches)` : ''}`);
   return { moduleId: module.id, outcome: 'generated' };
@@ -321,8 +330,9 @@ async function writeModule(args: {
   runnerName: RunnerName;
   fingerprint: string;
   parsed: ParsedAgentOutput;
+  existingRaw?: string | null;
 }): Promise<void> {
-  const { module, projectRoot, config, runnerName, fingerprint, parsed } = args;
+  const { module, projectRoot, config, runnerName, fingerprint, parsed, existingRaw } = args;
   const generatedAt = new Date().toISOString();
   const foldElements = module.elements.length <= config.elementDocThreshold;
 
@@ -355,7 +365,7 @@ async function writeModule(args: {
     tags: [],
   };
 
-  await snapshotModuleDocHistory(projectRoot, module, config.historyKeep);
+  await snapshotModuleDocHistory(projectRoot, module, config.historyKeep, existingRaw);
   await writeModuleDoc(projectRoot, module, moduleFrontmatter, body);
 
   if (!foldElements) {

@@ -115,6 +115,50 @@ describe('buildModulePrompt', () => {
     }
   });
 
+  it('emits the localized invariants heading in the output contract for non-English languages', async () => {
+    const module: ModuleDescriptor = {
+      id: 'm',
+      name: 'm',
+      rootPath: tmpDir,
+      relRootPath: 'm',
+      framework: 'generic',
+      elements: [],
+      relations: [],
+      files: [],
+    };
+    const config = { ...getDefaultConfig(), language: 'uk' };
+    const [batch] = splitIntoBatches(module, config.maxFilesPerPrompt);
+    const prompt = await buildModulePrompt(module, config, batch!);
+
+    // The contract must literally spell out the heading parseInvariantsSection will search for
+    // (getSectionLabels('uk').invariants), not the hardcoded English word.
+    expect(prompt).toContain('## Інваріанти');
+    expect(prompt).not.toContain('## Invariants');
+  });
+
+  it('keeps the English invariants heading for the default language config', async () => {
+    const module: ModuleDescriptor = {
+      id: 'm',
+      name: 'm',
+      rootPath: tmpDir,
+      relRootPath: 'm',
+      framework: 'generic',
+      elements: [],
+      relations: [],
+      files: [],
+    };
+    const config = getDefaultConfig();
+    const [batch] = splitIntoBatches(module, config.maxFilesPerPrompt);
+    const prompt = await buildModulePrompt(module, config, batch!);
+
+    expect(prompt).toContain('## Invariants');
+    expect(prompt).toContain('## Purpose');
+    expect(prompt).toContain('## Responsibilities');
+    expect(prompt).toContain('## Business Logic');
+    expect(prompt).toContain('## Inputs / Outputs');
+    expect(prompt).toContain('## Relationships');
+  });
+
   it('deduplicates and caps the module-level relationship summary', async () => {
     const relations: RelationDescriptor[] = Array.from({ length: 60 }, (_, i) => ({
       type: 'import',

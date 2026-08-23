@@ -153,6 +153,35 @@ describe('resolveSinceContext', () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/--since ignored:[\s\S]*falling back to full-module verification/));
   });
 
+  it('resolves changed files relative to projectRoot (not the repo top-level) when projectRoot is a subdirectory of a larger git repo', async () => {
+    // Monorepo shape: the git repo root is tmpDir, but docmap's projectRoot is a package subdirectory
+    // of it. Without `--relative`, git's own output is repo-root-relative (e.g.
+    // "packages/pkg-a/orders/index.ts"), which never intersects a module's projectRoot-relative files
+    // (e.g. "orders/index.ts"), so `--since` silently no-ops for every module.
+    await initGitRepo(tmpDir);
+    const projectRoot = path.join(tmpDir, 'packages', 'pkg-a');
+    await fs.mkdir(path.join(projectRoot, 'orders'), { recursive: true });
+    await fs.writeFile(
+      path.join(projectRoot, 'orders', 'index.ts'),
+      'export function cancelOrder(order) { return order.status === "pending"; }\n',
+    );
+    const baseRef = await commitAll(tmpDir, 'baseline');
+
+    await fs.writeFile(
+      path.join(projectRoot, 'orders', 'index.ts'),
+      'export function cancelOrder(order) { return true; }\n',
+    );
+    await commitAll(tmpDir, 'drop status guard');
+
+    const since = await resolveSinceContext(baseRef, projectRoot, logger);
+
+    expect(since).not.toBeNull();
+    // projectRoot-relative, as resolveSinceDiffForModule assumes — never the repo-root-relative
+    // "packages/pkg-a/orders/index.ts".
+    expect(since?.changedFiles).toContain('orders/index.ts');
+    expect(since?.changedFiles).not.toContain('packages/pkg-a/orders/index.ts');
+  });
+
   it('returns null and logs a warning when the directory is not a git repository at all', async () => {
     const nonGitDir = await fs.mkdtemp(path.join(os.tmpdir(), 'docmap-not-a-repo-'));
     try {

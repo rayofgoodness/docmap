@@ -18,6 +18,7 @@ import { getDocmapRoot, readBriefDoc, readModuleDoc } from './docWriter.js';
 import { describeBatchFailure, isLikelyTimeout } from './orchestrator.js';
 import type { AgentRunner, RunnerResult } from '../runners/types.js';
 import { getSectionLabels } from '../utils/lang.js';
+import { toPosixPath } from '../utils/fsSafe.js';
 
 /**
  * Marker vocabulary for `docmap verify`. Deliberately distinct from markers.ts's generate markers —
@@ -44,7 +45,7 @@ export interface ParsedVerifyOutput {
 
 // e.g. "I1: KEPT — the guard clause still checks status" — the id/verdict separator is always ":",
 // but the verdict/justification separator varies across models/temperature (em-dash, hyphen, colon).
-const INVARIANT_LINE = /^(I\d+):\s*(KEPT|CHANGED|VIOLATED)\s*(?:—|-|:)\s*(.+)$/;
+const INVARIANT_LINE = /^(I\d+):\s*(KEPT|CHANGED|VIOLATED)(?:\s*(?:—|-|:)\s*|\s+)(.+)$/;
 
 function extractBlock(text: string): string | null {
   const startIdx = text.indexOf(VERIFY_START);
@@ -161,7 +162,7 @@ export async function resolveSinceDiffForModule(
   if (touchedFiles.length === 0) return undefined;
 
   try {
-    const result = await execa('git', ['diff', since.ref, '--', ...touchedFiles], { cwd: projectRoot });
+    const result = await execa('git', ['diff', '--relative', since.ref, '--', ...touchedFiles], { cwd: projectRoot });
     return {
       ref: since.ref,
       files: touchedFiles,
@@ -281,6 +282,8 @@ export async function buildVerifyPrompt(
 export interface VerifyCallOutcome {
   parsed: ParsedVerifyOutput | null;
   lastResult: RunnerResult;
+  /** The timeout the last attempt actually ran with — retries after a likely timeout double it. */
+  effectiveTimeoutMs: number;
 }
 
 /**
@@ -338,7 +341,7 @@ export async function runVerifyCall(
     }
   }
 
-  return { parsed, lastResult: result };
+  return { parsed, lastResult: result, effectiveTimeoutMs: timeoutMs };
 }
 
 export type VerifyModuleStatus = 'missing' | 'unchanged' | 'verified';
@@ -385,9 +388,10 @@ export async function resolveAgainstDoc(
   projectRoot: string,
   against: string,
 ): Promise<{ frontmatter: ModuleFrontmatter; body: string }> {
+  const normalizedAgainst = toPosixPath(against);
   const resolvedPath =
-    against.startsWith('.history/') || against.startsWith('./.history/')
-      ? path.join(getDocmapRoot(projectRoot), against)
+    normalizedAgainst.startsWith('.history/') || normalizedAgainst.startsWith('./.history/')
+      ? path.join(getDocmapRoot(projectRoot), normalizedAgainst)
       : path.isAbsolute(against)
         ? against
         : path.resolve(projectRoot, against);
@@ -426,7 +430,7 @@ export async function resolveSinceContext(
   logger?: Logger,
 ): Promise<SinceContext | null> {
   try {
-    const result = await execa('git', ['diff', '--name-only', ref], { cwd: projectRoot });
+    const result = await execa('git', ['diff', '--name-only', '--relative', ref], { cwd: projectRoot });
     const changedFiles = result.stdout
       .split('\n')
       .map((line) => line.trim())
@@ -474,6 +478,12 @@ export async function runVerify(options: VerifyOptions): Promise<VerifySummary> 
   }
 
   const instructions = config.skill ? await loadSkillInstructions(projectRoot, config.skill, logger) : undefined;
+
+  if (options.against && options.moduleIds?.length !== 1) {
+    throw new Error(
+      '--against requires --module <id> to scope it to exactly one module (a historical baseline only makes sense compared against the module it came from)',
+    );
+  }
 
   const since = options.sinceRef ? await resolveSinceContext(options.sinceRef, projectRoot, logger) : null;
   const against = options.against ? await resolveAgainstDoc(projectRoot, options.against) : undefined;
@@ -570,11 +580,11 @@ export async function verifyModule(args: {
     progress?.batchFinished(label);
   }
 
-  const { parsed, lastResult } = outcome;
+  const { parsed, lastResult, effectiveTimeoutMs } = outcome;
   if (parsed === null) {
     // A parse failure must never be defaulted to COMPATIBLE — that would silently hide a real
     // problem. Surface it as an error the human must look at instead.
-    const reason = describeBatchFailure(lastResult, config.timeoutMs);
+    const reason = describeBatchFailure(lastResult, effectiveTimeoutMs);
     logger.warn(`[error] ${module.id} — verify did not return a valid response (${reason})`);
     return { moduleId: module.id, name: module.name, status: 'verified', error: reason };
   }
@@ -661,7 +671,13 @@ async function buildForManagersLines(
 
 function formatReportTimestamp(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+/** Collapses newlines and escapes pipes so raw runner stderr (which can contain either) can't corrupt
+ * the markdown table it's interpolated into. */
+function sanitizeForTableCell(s: string): string {
+  return s.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|');
 }
 
 /**
@@ -694,7 +710,7 @@ export async function writeVerifyReport(
     '| --- | --- | --- |',
   ];
   for (const r of reports) {
-    const verdictCell = r.verdict ?? (r.error ? `error: ${r.error}` : '-');
+    const verdictCell = r.verdict ?? (r.error ? `error: ${sanitizeForTableCell(r.error)}` : '-');
     lines.push(`| ${r.name} (${r.moduleId}) | ${r.status} | ${verdictCell} |`);
   }
 
