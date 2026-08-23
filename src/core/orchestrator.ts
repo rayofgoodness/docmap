@@ -351,6 +351,7 @@ async function writeModule(args: {
     dependencies: module.relations
       .filter((r) => r.toModule)
       .map((r) => ({ module: r.toModule as string, type: r.type, detail: r.detail })),
+    dependents: (module.metadata?.dependents as ModuleFrontmatter['dependents'] | undefined) ?? [],
     tags: [],
   };
 

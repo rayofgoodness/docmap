@@ -31,6 +31,7 @@ describe('buildIndexBody', () => {
 
     const body = buildIndexBody(modules);
 
+    expect(body).toContain('| Module | Framework | Path | Elements | Used by |');
     expect(body).not.toContain('## Integration surface');
     expect(body).not.toContain('(none)');
   });

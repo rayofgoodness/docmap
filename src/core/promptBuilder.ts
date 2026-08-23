@@ -88,6 +88,17 @@ function buildRelationSummary(relations: RelationDescriptor[]): string {
   return lines.join('\n');
 }
 
+/** Relations only ever record the outgoing (A depends on B) direction, so without this the agent
+ * has no way to see the incoming edges discovery.ts's reverse index (module.metadata.dependents)
+ * computed — leaving "Relationships" sections one-directional even when other modules point back
+ * at this one. */
+function buildUsedBySummary(module: ModuleDescriptor): string {
+  const dependents = (module.metadata?.dependents as Array<{ module: string; type: string }> | undefined) ?? [];
+  if (dependents.length === 0) return 'Used by: (not used by any other scanned module)';
+  const names = dependents.map((d) => `${d.module} (${d.type})`).join(', ');
+  return `Used by ${dependents.length} other module(s): ${names}`;
+}
+
 function buildElementSection(element: ElementDescriptor, moduleId: string, allRelations: RelationDescriptor[]): string {
   const fromId = `${moduleId}::${element.id}`;
   const ownRelations = allRelations.filter((r) => r.fromId === fromId);
@@ -162,6 +173,7 @@ export async function buildModulePrompt(
     '',
     'Module-level relationship summary (deduplicated across the whole module — describe business purpose, this is context, not a list to write blocks for):',
     buildRelationSummary(module.relations),
+    buildUsedBySummary(module),
     '',
     `Elements in this ${batch.totalBatches > 1 ? 'batch' : 'module'}:`,
     elementLines || '(none)',

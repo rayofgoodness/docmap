@@ -38,6 +38,7 @@ function frontmatter(overrides: Partial<ModuleFrontmatter> = {}): ModuleFrontmat
     elements: [],
     invariants: [],
     dependencies: [],
+    dependents: [],
     tags: [],
     ...overrides,
   };

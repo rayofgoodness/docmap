@@ -60,15 +60,18 @@ function buildIntegrationSurfaceSection(modules: ModuleDescriptor[]): string[] {
 
 export function buildIndexBody(modules: ModuleDescriptor[]): string {
   const rows = modules
-    .map((m) => `| ${m.name} | ${m.framework} | ${m.relRootPath} | ${m.elements.length} |`)
+    .map(
+      (m) =>
+        `| ${m.name} | ${m.framework} | ${m.relRootPath} | ${m.elements.length} | ${(m.metadata?.dependents as unknown[] | undefined)?.length ?? 0} |`,
+    )
     .join('\n');
 
   return [
     '## Modules',
     '',
-    '| Module | Framework | Path | Elements |',
-    '|---|---|---|---|',
-    rows || '| _none_ | | | |',
+    '| Module | Framework | Path | Elements | Used by |',
+    '|---|---|---|---|---|',
+    rows || '| _none_ | | | | |',
     '',
     '## Relationships',
     '',

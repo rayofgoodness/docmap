@@ -34,6 +34,7 @@ export const ModuleFrontmatterSchema = z.object({
       }),
     )
     .default([]),
+  dependents: z.array(z.object({ module: z.string(), type: RelationTypeSchema })).default([]),
   tags: z.array(z.string()).default([]),
 });
 export type ModuleFrontmatter = z.infer<typeof ModuleFrontmatterSchema>;

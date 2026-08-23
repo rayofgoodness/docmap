@@ -185,6 +185,7 @@ describe('buildVerifyPrompt', () => {
       elements: [],
       invariants,
       dependencies: [],
+      dependents: [],
       tags: [],
     };
   }

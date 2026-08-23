@@ -48,3 +48,30 @@ describe('discoverProject peers', () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('missing'));
   });
 });
+
+describe('discoverProject reverse "used by" index', () => {
+  it('records a dependent on the target module for a one-directional relation (moduleOne di.xml -> moduleTwo)', async () => {
+    const { modules } = await discoverProject(makeContext());
+    const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;
+    const moduleTwo = modules.find((m) => m.name === 'Vendor_ModuleTwo')!;
+
+    // moduleOne's di.xml preference points at moduleTwo — moduleTwo never declares anything back at
+    // moduleOne, so this only shows up at all if the reverse index was built.
+    expect(moduleOne.relations.some((r) => r.type === 'di' && r.toModule === moduleTwo.id)).toBe(true);
+    expect(moduleTwo.metadata?.dependents).toContainEqual({ module: moduleOne.id, type: 'di' });
+
+    // The forward direction must not have grown a reciprocal dependents entry.
+    expect(moduleOne.metadata?.dependents ?? []).not.toContainEqual({ module: moduleTwo.id, type: 'di' });
+  });
+
+  it('deduplicates dependents to one (fromModule, type) entry even when many elements produce the same relation', async () => {
+    const { modules } = await discoverProject(makeContext());
+    const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;
+    const moduleTwo = modules.find((m) => m.name === 'Vendor_ModuleTwo')!;
+
+    const diDependentEntries = ((moduleTwo.metadata?.dependents as Array<{ module: string; type: string }>) ?? []).filter(
+      (d) => d.module === moduleOne.id && d.type === 'di',
+    );
+    expect(diDependentEntries).toHaveLength(1);
+  });
+});

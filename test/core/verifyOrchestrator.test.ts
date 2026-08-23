@@ -52,6 +52,7 @@ function makeFrontmatter(overrides: Partial<ModuleFrontmatter>): ModuleFrontmatt
     elements: [],
     invariants: [{ id: 'I1', text: 'An order can only be cancelled while pending or on-hold.' }],
     dependencies: [],
+    dependents: [],
     tags: [],
     ...overrides,
   };
