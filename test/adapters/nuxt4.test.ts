@@ -30,6 +30,7 @@ describe('nuxt4Adapter', () => {
       'app-root',
       'components',
       'composables',
+      'layer_layers_base',
       'pages',
       'plugins',
       'server',
@@ -37,6 +38,16 @@ describe('nuxt4Adapter', () => {
       'stores',
       'utils',
     ]);
+  });
+
+  it('discovers a layer module for layers/base even though it is not in nuxt.config.ts extends', async () => {
+    // layers/base isn't listed under `extends` in the fixture's nuxt.config.ts — Nuxt 4
+    // auto-registers every subdirectory of layers/ as a layer regardless, so discovery must too.
+    const modules = await nuxt4Adapter.discoverModules(makeContext());
+    const layerBase = modules.find((m) => m.id === 'layer_layers_base');
+    expect(layerBase).toBeDefined();
+    expect(layerBase?.relRootPath).toBe('layers/base');
+    expect(layerBase?.elements.map((e) => e.name).sort()).toEqual(['checkout.ts', 'checkout.vue']);
   });
 
   it('discovers plugins and utils modules with kind "file" elements', async () => {

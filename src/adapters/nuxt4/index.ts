@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import type { DiscoveryContext, FrameworkAdapter, ModuleDescriptor, RelationDescriptor } from '../types.js';
 import { toPosixPath } from '../../utils/fsSafe.js';
@@ -7,6 +8,27 @@ import { APP_CATEGORIES, SHARED_CATEGORY, buildAppRootModule, buildCategoryModul
 import { buildServerModule } from './serverRoutes.js';
 import { resolveNuxt4Relations } from './relations.js';
 import { listFilesUnder } from './scan.js';
+
+/** Normalizes a layer path (e.g. './layers/base') to a canonical relative form for dedup. */
+function normalizeLayerPath(layerRelPath: string): string {
+  return toPosixPath(path.normalize(layerRelPath)).replace(/\/$/, '');
+}
+
+/**
+ * Nuxt 4 auto-registers every immediate subdirectory of `<projectRoot>/layers/` as a layer,
+ * without requiring an `extends` entry in nuxt.config. Lists those subdirectories (if the
+ * layers/ directory exists at all).
+ */
+async function findAutoLayers(projectRoot: string): Promise<string[]> {
+  const layersDir = path.join(projectRoot, 'layers');
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(layersDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries.filter((entry) => entry.isDirectory()).map((entry) => `layers/${entry.name}`);
+}
 
 async function buildLayerModule(
   layerRelPath: string,
@@ -75,13 +97,27 @@ export const nuxt4Adapter: FrameworkAdapter = {
     );
     if (sharedModule) modules.push(sharedModule);
 
+    const layerPaths = new Map<string, string>(); // normalized path -> original relative path
+
     const configPath = await findNuxtConfigPath(projectRoot);
     if (configPath) {
       const configSource = await fs.readFile(configPath, 'utf8');
       for (const layer of findExtendsLayers(configSource)) {
-        const layerModule = await buildLayerModule(layer, projectRoot, config.exclude, config.include);
-        if (layerModule) modules.push(layerModule);
+        layerPaths.set(normalizeLayerPath(layer), layer);
       }
+    }
+
+    // Nuxt 4 auto-registers every subdirectory of layers/ as a layer, without needing an
+    // explicit extends entry in nuxt.config — so discover those alongside whatever extends lists.
+    // A layer that's both auto-registered and explicitly listed in extends must not be added twice.
+    for (const autoLayer of await findAutoLayers(projectRoot)) {
+      const normalized = normalizeLayerPath(autoLayer);
+      if (!layerPaths.has(normalized)) layerPaths.set(normalized, autoLayer);
+    }
+
+    for (const layer of layerPaths.values()) {
+      const layerModule = await buildLayerModule(layer, projectRoot, config.exclude, config.include);
+      if (layerModule) modules.push(layerModule);
     }
 
     return modules;
