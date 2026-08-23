@@ -1,0 +1,6 @@
+{
+  "framework": "nuxt4",
+  "peers": [
+    { "name": "backend", "path": "../magento2-peer-fake" }
+  ]
+}

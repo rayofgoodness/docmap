@@ -1,0 +1,8 @@
+type Query {
+    peerModuleCart: PeerModuleCart @resolver(class: "Vendor\\PeerModule\\Model\\Resolver\\CartResolver")
+}
+
+type PeerModuleCart {
+    id: Int
+    items_count: Int
+}
