@@ -89,3 +89,18 @@ export const BriefFrontmatterSchema = z.object({
   generated_by: GeneratedBySchema,
 });
 export type BriefFrontmatter = z.infer<typeof BriefFrontmatterSchema>;
+
+/**
+ * The domain glossary is a single aggregate file over ALL briefs, not per-module — so unlike every
+ * other kind here it carries no `module`/`source_fingerprint` id to trace back to. `docmap status`
+ * can still detect its presence/absence via `readGlossaryDoc` without needing a dedicated schema
+ * field for it.
+ */
+export const GlossaryFrontmatterSchema = z.object({
+  docmap_version: z.literal(1),
+  kind: z.literal('glossary'),
+  language: z.string(),
+  generated_at: z.string(),
+  generated_by: GeneratedBySchema,
+});
+export type GlossaryFrontmatter = z.infer<typeof GlossaryFrontmatterSchema>;

@@ -4,10 +4,12 @@ import type { ElementDescriptor, ModuleDescriptor } from '../adapters/types.js';
 import {
   BriefFrontmatterSchema,
   ElementFrontmatterSchema,
+  GlossaryFrontmatterSchema,
   IndexFrontmatterSchema,
   ModuleFrontmatterSchema,
   type BriefFrontmatter,
   type ElementFrontmatter,
+  type GlossaryFrontmatter,
   type IndexFrontmatter,
   type ModuleFrontmatter,
 } from '../docFormat/frontmatter.js';
@@ -55,6 +57,14 @@ export function getBriefDocPath(projectRoot: string, module: Pick<ModuleDescript
 
 export function getModuleHistoryDir(projectRoot: string, module: Pick<ModuleDescriptor, 'relRootPath'>): string {
   return safeJoin(getDocmapRoot(projectRoot), path.join('.history', module.relRootPath));
+}
+
+/**
+ * Single aggregate file over all briefs, living alongside them under `.docmap/business/` rather than
+ * per-module — there is exactly one glossary for the whole project.
+ */
+export function getGlossaryDocPath(projectRoot: string): string {
+  return path.join(getDocmapRoot(projectRoot), 'business', 'glossary.md');
 }
 
 async function atomicWrite(filePath: string, content: string): Promise<void> {
@@ -167,4 +177,30 @@ export async function readBriefDoc(
   }
 }
 
-export { BriefFrontmatterSchema, ElementFrontmatterSchema, IndexFrontmatterSchema, ModuleFrontmatterSchema, parseDoc };
+export async function writeGlossaryDoc(
+  projectRoot: string,
+  frontmatter: GlossaryFrontmatter,
+  body: string,
+): Promise<void> {
+  await atomicWrite(getGlossaryDocPath(projectRoot), renderDoc(frontmatter, body));
+}
+
+export async function readGlossaryDoc(
+  projectRoot: string,
+): Promise<{ frontmatter: GlossaryFrontmatter; body: string } | null> {
+  try {
+    const raw = await fs.readFile(getGlossaryDocPath(projectRoot), 'utf8');
+    return tryParseDoc(GlossaryFrontmatterSchema, raw);
+  } catch {
+    return null;
+  }
+}
+
+export {
+  BriefFrontmatterSchema,
+  ElementFrontmatterSchema,
+  GlossaryFrontmatterSchema,
+  IndexFrontmatterSchema,
+  ModuleFrontmatterSchema,
+  parseDoc,
+};

@@ -24,7 +24,7 @@ export async function briefCommand(options: BriefOptions): Promise<void> {
     },
   });
 
-  const { frameworkName, reports } = await runBrief({
+  const { frameworkName, reports, glossary } = await runBrief({
     projectRoot: options.projectRoot,
     config,
     logger,
@@ -45,6 +45,12 @@ export async function briefCommand(options: BriefOptions): Promise<void> {
   logger.info(
     `\nDone. framework=${frameworkName} generated=${generated} unchanged=${unchanged} missing=${missing} errors=${errored}`,
   );
+
+  if (glossary) {
+    logger.info(
+      glossary.written ? 'glossary    .docmap/business/glossary.md' : `glossary    skipped (${glossary.reason})`,
+    );
+  }
 
   if (errored > 0) process.exitCode = 1;
 }

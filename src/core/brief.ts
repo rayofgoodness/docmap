@@ -9,6 +9,7 @@ import { createConcurrencyLimiter } from './concurrency.js';
 import { formatDuration, ProgressTracker } from './progress.js';
 import { getRunner } from '../runners/registry.js';
 import { readBriefDoc, readModuleDoc, writeBriefDoc } from './docWriter.js';
+import { buildGlossary, type GlossaryResult } from './glossary.js';
 import { describeBatchFailure, isLikelyTimeout } from './orchestrator.js';
 import type { AgentRunner, RunnerResult } from '../runners/types.js';
 
@@ -199,6 +200,11 @@ export interface BriefOptions {
 export interface BriefSummary {
   frameworkName: string;
   reports: BriefModuleReport[];
+  /**
+   * Only set for a full (non-`--module`-scoped) run — a `--module`-scoped run regenerates one module's
+   * brief and must not trigger a full glossary rebuild on every partial run.
+   */
+  glossary?: GlossaryResult;
 }
 
 export async function runBrief(options: BriefOptions): Promise<BriefSummary> {
@@ -255,7 +261,16 @@ export async function runBrief(options: BriefOptions): Promise<BriefSummary> {
     progress.stop();
   }
 
-  return { frameworkName, reports };
+  // A --module run only ever touches a subset of briefs; rebuilding the project-wide glossary from a
+  // partial set on every such run would be both surprising (it'd churn on unrelated modules' terms
+  // going stale/missing from it) and wasteful (one more agent call per partial run). Only a full run —
+  // where targetModules already covers every discovered module — triggers it.
+  let glossary: GlossaryResult | undefined;
+  if (!options.moduleIds?.length) {
+    glossary = await buildGlossary({ projectRoot, modules: targetModules, config, runner, logger });
+  }
+
+  return { frameworkName, reports, glossary };
 }
 
 export async function briefModule(args: {
