@@ -3,7 +3,7 @@ import type { ElementDescriptor, ModuleDescriptor, RelationDescriptor, SourceFil
 import type { ResolvedDocmapConfig } from '../config/schema.js';
 import { BODY_END, BODY_START, ELEMENT_END, elementStartMarker } from './markers.js';
 
-async function readExcerpt(absPath: string, maxBytes: number): Promise<string> {
+export async function readExcerpt(absPath: string, maxBytes: number): Promise<string> {
   try {
     const content = await fs.readFile(absPath, 'utf8');
     if (content.length <= maxBytes) return content;
@@ -19,7 +19,7 @@ async function readExcerpt(absPath: string, maxBytes: number): Promise<string> {
  * output markers at all. Elements are already text-classified by each adapter, so this only ever sees
  * documentable files.
  */
-function collectFiles(elements: ElementDescriptor[]): SourceFileRef[] {
+export function collectFiles(elements: ElementDescriptor[]): SourceFileRef[] {
   const seen = new Set<string>();
   const files: SourceFileRef[] = [];
   for (const element of elements) {

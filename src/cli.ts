@@ -5,6 +5,7 @@ import { Command } from 'commander';
 import { scanCommand } from './commands/scan.js';
 import { generateCommand } from './commands/generate.js';
 import { statusCommand } from './commands/status.js';
+import { verifyCommand } from './commands/verify.js';
 import { initCommand } from './commands/init.js';
 import { installSkillsCommand, type SkillAgent } from './commands/installSkills.js';
 import { cleanCommand } from './commands/clean.js';
@@ -75,6 +76,29 @@ program
   .option('--dir <path>', 'restrict scanning to a subdirectory of the project')
   .action(async (opts) => {
     await statusCommand({ projectRoot: process.cwd(), json: opts.json, dir: opts.dir });
+  });
+
+program
+  .command('verify')
+  .description('Compare current source against documented invariants and flag business-logic regressions')
+  .option('--module <id>', 'target a specific module id (repeatable)', (val, prev: string[]) => [...prev, val], [])
+  .option('--runner <name>', 'agent runner: claude|codex|gemini|mock')
+  .option('--json', 'output JSON')
+  .option('--strict', 'also fail (exit 1) on CHANGED verdicts, not just BREAKING')
+  .option('--dir <path>', 'restrict scanning to a subdirectory of the project')
+  .option('--framework <framework>', 'force a framework adapter')
+  .option('--skill <path>', 'markdown/SKILL.md file with project-specific documentation instructions')
+  .action(async (opts) => {
+    await verifyCommand({
+      projectRoot: process.cwd(),
+      module: opts.module?.length ? opts.module : undefined,
+      runner: opts.runner as RunnerName | undefined,
+      json: opts.json,
+      strict: opts.strict,
+      dir: opts.dir,
+      framework: opts.framework,
+      skill: opts.skill,
+    });
   });
 
 program
