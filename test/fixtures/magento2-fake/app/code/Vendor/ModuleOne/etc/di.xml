@@ -4,4 +4,10 @@
     <type name="Vendor\ModuleTwo\Controller\Index\Index">
         <plugin name="beforeIndex" type="Vendor\ModuleOne\Plugin\BeforeIndexPlugin" sortOrder="10"/>
     </type>
+    <type name="Vendor\ModuleOne\Model\Foo">
+        <arguments>
+            <argument name="fooDependency" xsi:type="object">Vendor\ModuleTwo\Api\FooInterface</argument>
+        </arguments>
+    </type>
+    <virtualType name="Vendor\ModuleOne\Model\FooVirtual" type="Vendor\ModuleTwo\Api\FooInterface"/>
 </config>

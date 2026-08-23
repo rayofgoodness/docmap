@@ -82,6 +82,45 @@ async function diRelationsForArea(
         confidence: 'deterministic',
       });
     }
+
+    // Heuristic: <arguments><argument xsi:type="object">SomeClass</argument></arguments>
+    // is DI-injected construction, not a hard code dependency the way preference/plugin
+    // are (arg wiring can be overridden per-area/per-instance), so mark it heuristic.
+    const argumentsNode = (typeNode as Record<string, unknown>).arguments as Record<string, unknown> | undefined;
+    for (const argument of asArray(argumentsNode?.argument as Record<string, unknown> | Record<string, unknown>[] | undefined)) {
+      const argRecord = argument as Record<string, unknown>;
+      if (argRecord['@_xsi:type'] !== 'object') continue;
+      const depClass = argRecord['#text'];
+      if (typeof depClass !== 'string' || !depClass) continue;
+      const from = ownerRef(targetType, nsMap);
+      const to = ownerRef(depClass, nsMap);
+      relations.push({
+        type: 'di',
+        fromId: from.id,
+        toId: to.id,
+        toModule: to.moduleId,
+        detail: `constructor arg: ${depClass}${suffix}`,
+        confidence: 'heuristic',
+      });
+    }
+  }
+
+  // Heuristic: <virtualType name="X" type="Y"> is config-level composition, not a hard
+  // code dependency the way preference/plugin are, so mark it heuristic.
+  for (const virtualTypeNode of asArray(config.virtualType as Record<string, string> | Record<string, string>[])) {
+    const vtName = virtualTypeNode?.['@_name'];
+    const vtType = virtualTypeNode?.['@_type'];
+    if (!vtName || !vtType) continue;
+    const from = ownerRef(vtName, nsMap);
+    const to = ownerRef(vtType, nsMap);
+    relations.push({
+      type: 'di',
+      fromId: from.id,
+      toId: to.id,
+      toModule: to.moduleId,
+      detail: `virtualType ${vtName} extends ${vtType}${suffix}`,
+      confidence: 'heuristic',
+    });
   }
 
   return relations;

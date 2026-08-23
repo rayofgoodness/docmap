@@ -134,6 +134,42 @@ describe('magento2Adapter', () => {
     expect(frontendPlugin?.detail).toBe('plugin on Vendor\\ModuleTwo\\Controller\\Index\\Index (frontend)');
   });
 
+  it('resolves a heuristic di relation for a virtualType composition', async () => {
+    const { modules } = await discoverProject(makeContext());
+    const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;
+    const moduleTwoId = modules.find((m) => m.name === 'Vendor_ModuleTwo')!.id;
+
+    const virtualType = moduleOne.relations.find(
+      (r) => r.type === 'di' && r.detail?.startsWith('virtualType '),
+    );
+    expect(virtualType).toMatchObject({
+      fromId: `${moduleOne.id}::Model/FooVirtual.php`,
+      toModule: moduleTwoId,
+      toId: `${moduleTwoId}::Api/FooInterface.php`,
+      confidence: 'heuristic',
+    });
+    expect(virtualType?.detail).toBe(
+      'virtualType Vendor\\ModuleOne\\Model\\FooVirtual extends Vendor\\ModuleTwo\\Api\\FooInterface',
+    );
+  });
+
+  it('resolves a heuristic di relation for an xsi:type="object" constructor argument', async () => {
+    const { modules } = await discoverProject(makeContext());
+    const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;
+    const moduleTwoId = modules.find((m) => m.name === 'Vendor_ModuleTwo')!.id;
+
+    const ctorArg = moduleOne.relations.find(
+      (r) => r.type === 'di' && r.detail?.startsWith('constructor arg: '),
+    );
+    expect(ctorArg).toMatchObject({
+      fromId: `${moduleOne.id}::Model/Foo.php`,
+      toModule: moduleTwoId,
+      toId: `${moduleTwoId}::Api/FooInterface.php`,
+      confidence: 'heuristic',
+    });
+    expect(ctorArg?.detail).toBe('constructor arg: Vendor\\ModuleTwo\\Api\\FooInterface');
+  });
+
   it('resolves a deterministic events.xml observer binding', async () => {
     const { modules } = await discoverProject(makeContext());
     const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;
