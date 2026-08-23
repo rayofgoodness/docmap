@@ -150,6 +150,23 @@ describe('nuxt4Adapter', () => {
     expect(apiCall).toMatchObject({ detail: '/api/shipping', confidence: 'heuristic' });
   });
 
+  it('resolves a template-literal $fetch call to the matching dynamic server route', async () => {
+    // ProductCard.vue calls `$fetch(`/api/products/${props.id}`)` — a template literal, not a plain
+    // string literal — which must resolve against server/api/products/[id].get.ts (route path
+    // `/api/products/:id`) via segment-wise matching, not exact string equality.
+    const { modules } = await discoverProject(makeContext());
+    const components = modules.find((m) => m.id === 'components')!;
+    const apiCall = components.relations.find(
+      (r) => r.type === 'api-call' && r.toModule === 'server' && r.detail?.includes('/api/products/'),
+    );
+    expect(apiCall).toMatchObject({
+      type: 'api-call',
+      toModule: 'server',
+      detail: '/api/products/${props.id}',
+      confidence: 'heuristic',
+    });
+  });
+
   it('leaves root-level store and server relations completely unaffected by layer modules existing', async () => {
     const { modules } = await discoverProject(makeContext());
     const pages = modules.find((m) => m.id === 'pages')!;
