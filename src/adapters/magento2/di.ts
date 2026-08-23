@@ -134,10 +134,45 @@ async function diRelations(module: ModuleDescriptor, nsMap: NamespaceEntry[]): P
   return relations;
 }
 
+// Heuristic: scan module PHP source for `->dispatch('event_name', ...)` calls to build a
+// best-effort index of event name -> the module that dispatches it. A module may dispatch
+// multiple events; if more than one module dispatches the same event name (rare), the first
+// one encountered wins. This is not authoritative (no static analysis, just a regex over
+// source text), so relations derived from it are always marked 'heuristic'.
+const DISPATCH_CALL_PATTERN = /->dispatch\(\s*['"]([^'"]+)['"]/g;
+
+async function buildEventDispatcherMap(modules: ModuleDescriptor[]): Promise<Map<string, string>> {
+  const dispatcherByEvent = new Map<string, string>();
+
+  for (const module of modules) {
+    for (const file of module.files) {
+      if (!file.relPath.endsWith('.php')) continue;
+      let source: string;
+      try {
+        source = await fs.readFile(file.absPath, 'utf8');
+      } catch {
+        continue;
+      }
+
+      DISPATCH_CALL_PATTERN.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = DISPATCH_CALL_PATTERN.exec(source)) !== null) {
+        const eventName = match[1];
+        if (eventName && !dispatcherByEvent.has(eventName)) {
+          dispatcherByEvent.set(eventName, module.id);
+        }
+      }
+    }
+  }
+
+  return dispatcherByEvent;
+}
+
 async function eventRelationsForArea(
   module: ModuleDescriptor,
   nsMap: NamespaceEntry[],
   area: string,
+  dispatcherByEvent: Map<string, string>,
 ): Promise<RelationDescriptor[]> {
   const doc = await readXml(areaEtcPath(module, area, 'events.xml'));
   const config = doc?.config as Record<string, unknown> | undefined;
@@ -159,15 +194,31 @@ async function eventRelationsForArea(
         detail: `observes ${eventName}${suffix}`,
         confidence: 'deterministic',
       });
+
+      const dispatcherModuleId = dispatcherByEvent.get(eventName);
+      if (dispatcherModuleId && dispatcherModuleId !== module.id) {
+        relations.push({
+          type: 'event',
+          fromId: from.id,
+          toId: dispatcherModuleId,
+          toModule: dispatcherModuleId,
+          detail: `observes ${eventName} dispatched by ${dispatcherModuleId}${suffix}`,
+          confidence: 'heuristic',
+        });
+      }
     }
   }
   return relations;
 }
 
-async function eventRelations(module: ModuleDescriptor, nsMap: NamespaceEntry[]): Promise<RelationDescriptor[]> {
+async function eventRelations(
+  module: ModuleDescriptor,
+  nsMap: NamespaceEntry[],
+  dispatcherByEvent: Map<string, string>,
+): Promise<RelationDescriptor[]> {
   const relations: RelationDescriptor[] = [];
   for (const area of AREAS) {
-    relations.push(...(await eventRelationsForArea(module, nsMap, area)));
+    relations.push(...(await eventRelationsForArea(module, nsMap, area, dispatcherByEvent)));
   }
   return relations;
 }
@@ -177,9 +228,10 @@ export async function resolveMagento2XmlRelations(
   nsMap: NamespaceEntry[],
 ): Promise<RelationDescriptor[]> {
   const relations: RelationDescriptor[] = [];
+  const dispatcherByEvent = await buildEventDispatcherMap(modules);
   for (const module of modules) {
     relations.push(...(await diRelations(module, nsMap)));
-    relations.push(...(await eventRelations(module, nsMap)));
+    relations.push(...(await eventRelations(module, nsMap, dispatcherByEvent)));
   }
   return relations;
 }

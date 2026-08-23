@@ -180,6 +180,22 @@ describe('magento2Adapter', () => {
     });
   });
 
+  it('links an observer relation to the dispatching module found via ->dispatch() scanning', async () => {
+    const { modules } = await discoverProject(makeContext());
+    const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;
+    const moduleTwoId = modules.find((m) => m.name === 'Vendor_ModuleTwo')!.id;
+
+    const dispatcherLink = moduleOne.relations.find(
+      (r) => r.type === 'event' && r.toModule === moduleTwoId,
+    );
+    expect(dispatcherLink).toMatchObject({
+      toId: moduleTwoId,
+      toModule: moduleTwoId,
+      confidence: 'heuristic',
+    });
+    expect(dispatcherLink?.detail).toBe(`observes vendor_moduletwo_custom_event dispatched by ${moduleTwoId}`);
+  });
+
   it('resolves heuristic cross-module relations from PHP use statements', async () => {
     const { modules } = await discoverProject(makeContext());
     const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;
