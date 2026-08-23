@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { DiscoveryContext, FrameworkAdapter, ModuleDescriptor, RelationDescriptor } from '../types.js';
 import { toPosixPath } from '../../utils/fsSafe.js';
 import { findExtendsLayers, findNuxtConfigPath, resolveAppRoot } from './detect.js';
-import { APP_CATEGORIES, buildCategoryModule } from './categories.js';
+import { APP_CATEGORIES, SHARED_CATEGORY, buildAppRootModule, buildCategoryModule } from './categories.js';
 import { buildServerModule } from './serverRoutes.js';
 import { resolveNuxt4Relations } from './relations.js';
 import { listFilesUnder } from './scan.js';
@@ -53,6 +53,9 @@ export const nuxt4Adapter: FrameworkAdapter = {
       if (module) modules.push(module);
     }
 
+    const appRootModule = await buildAppRootModule(appRoot, projectRoot);
+    if (appRootModule) modules.push(appRootModule);
+
     const serverModule = await buildServerModule(
       path.join(projectRoot, 'server'),
       projectRoot,
@@ -60,6 +63,17 @@ export const nuxt4Adapter: FrameworkAdapter = {
       config.include,
     );
     if (serverModule) modules.push(serverModule);
+
+    // shared/ is Nuxt 4's official directory for code shared between app/ and server/, so it lives
+    // at the project root rather than under appRoot.
+    const sharedModule = await buildCategoryModule(
+      SHARED_CATEGORY,
+      path.join(projectRoot, 'shared'),
+      projectRoot,
+      config.exclude,
+      config.include,
+    );
+    if (sharedModule) modules.push(sharedModule);
 
     const configPath = await findNuxtConfigPath(projectRoot);
     if (configPath) {

@@ -26,7 +26,42 @@ describe('nuxt4Adapter', () => {
   it('discovers one module per present category plus server', async () => {
     const modules = await nuxt4Adapter.discoverModules(makeContext());
     const ids = modules.map((m) => m.id).sort();
-    expect(ids).toEqual(['components', 'composables', 'pages', 'server', 'stores']);
+    expect(ids).toEqual([
+      'app-root',
+      'components',
+      'composables',
+      'pages',
+      'plugins',
+      'server',
+      'shared',
+      'stores',
+      'utils',
+    ]);
+  });
+
+  it('discovers plugins and utils modules with kind "file" elements', async () => {
+    const modules = await nuxt4Adapter.discoverModules(makeContext());
+    const plugins = modules.find((m) => m.id === 'plugins')!;
+    const utils = modules.find((m) => m.id === 'utils')!;
+    expect(plugins.elements.map((e) => e.name)).toEqual(['analytics.client.ts']);
+    expect(plugins.elements[0]?.kind).toBe('file');
+    expect(utils.elements.map((e) => e.name)).toEqual(['formatDate.ts']);
+    expect(utils.elements[0]?.kind).toBe('file');
+  });
+
+  it('discovers an app-root module containing app.vue', async () => {
+    const modules = await nuxt4Adapter.discoverModules(makeContext());
+    const appRoot = modules.find((m) => m.id === 'app-root')!;
+    expect(appRoot.name).toBe('App Root');
+    expect(appRoot.elements.map((e) => e.name)).toEqual(['app.vue']);
+    expect(appRoot.elements[0]?.kind).toBe('file');
+  });
+
+  it('discovers a shared module containing currency.ts', async () => {
+    const modules = await nuxt4Adapter.discoverModules(makeContext());
+    const shared = modules.find((m) => m.id === 'shared')!;
+    expect(shared.elements.map((e) => e.name)).toEqual(['currency.ts']);
+    expect(shared.elements[0]?.kind).toBe('file');
   });
 
   it('derives Nitro route paths for server elements', async () => {
