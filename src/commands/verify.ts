@@ -12,6 +12,7 @@ export interface VerifyOptions {
   dir?: string;
   framework?: string;
   skill?: string;
+  since?: string;
 }
 
 export async function verifyCommand(options: VerifyOptions): Promise<void> {
@@ -33,6 +34,7 @@ export async function verifyCommand(options: VerifyOptions): Promise<void> {
     runnerName: config.runner,
     moduleIds: options.module,
     strict: options.strict,
+    sinceRef: options.since,
   });
 
   // Both --json and human mode produce the .md report — --json only changes what's printed to stdout.

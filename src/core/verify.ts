@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { execa } from 'execa';
 import type { DiscoveryContext, ModuleDescriptor } from '../adapters/types.js';
 import type { ResolvedDocmapConfig } from '../config/schema.js';
 import type { ModuleFrontmatter } from '../docFormat/frontmatter.js';
@@ -113,17 +114,77 @@ export function parseVerifyOutput(text: string): ParsedVerifyOutput | null {
   return { summary, invariants, undocumented };
 }
 
+/** A `--since <ref>` diff scoped to the files of one module, ready to drop into the verify prompt. */
+export interface SinceDiff {
+  ref: string;
+  /** Project-root-relative paths (posix) of this module's files touched by the diff. */
+  files: string[];
+  /** Unified diff text, already truncated to the per-excerpt byte budget. */
+  diffText: string;
+}
+
+/** Truncates a unified diff to the same per-excerpt byte budget as source excerpts (readExcerpt's
+ * convention in promptBuilder.ts), so a widely-touched module's `--since` diff can't blow the prompt
+ * budget the way an untruncated diff could. */
+function truncateDiffText(diff: string, maxBytes: number): string {
+  if (diff.length <= maxBytes) return diff;
+  return `${diff.slice(0, maxBytes)}\n...[diff truncated]`;
+}
+
+/** Project-root-relative (posix) path of a module file — module.files' own relPath is relative to the
+ * module's rootPath, not the project root, so it must be re-anchored under relRootPath before it can be
+ * compared against `git diff --name-only`'s project-root-relative output. */
+function moduleFileProjectRelPath(module: ModuleDescriptor, relPath: string): string {
+  return module.relRootPath ? `${module.relRootPath}/${relPath}` : relPath;
+}
+
+/**
+ * Resolves the `--since <ref>` diff for one module: intersects the project-wide changed-file list
+ * (computed once per `runVerify` call, not per module) against this module's own files, and — only when
+ * that intersection is non-empty — fetches a unified diff scoped to just those files. Returns undefined
+ * when `--since` isn't in play, the module's files weren't touched, or the per-module `git diff` call
+ * itself fails (logged as a warning; the module still gets verified in full-module mode either way).
+ */
+export async function resolveSinceDiffForModule(
+  module: ModuleDescriptor,
+  projectRoot: string,
+  config: ResolvedDocmapConfig,
+  since: { ref: string; changedFiles: string[] },
+  logger?: Logger,
+): Promise<SinceDiff | undefined> {
+  const changed = new Set(since.changedFiles);
+  const touchedFiles = module.files
+    .map((f) => moduleFileProjectRelPath(module, f.relPath))
+    .filter((relPath) => changed.has(relPath));
+  if (touchedFiles.length === 0) return undefined;
+
+  try {
+    const result = await execa('git', ['diff', since.ref, '--', ...touchedFiles], { cwd: projectRoot });
+    return {
+      ref: since.ref,
+      files: touchedFiles,
+      diffText: truncateDiffText(result.stdout, config.maxFileExcerptBytes),
+    };
+  } catch (err) {
+    logger?.warn(`${module.id} — could not compute --since diff for its changed files (${(err as Error).message}), continuing without it`);
+    return undefined;
+  }
+}
+
 /**
  * Builds the verify prompt: the OLD doc body verbatim (the behavioral baseline the agent must compare
  * against, not rewrite), the CURRENT module source (same collectFiles/readExcerpt batching as generate,
  * capped at maxFilesPerPrompt — a full multi-batch merge across verify calls is a deliberate v1 scope
- * cut), and the response contract naming the old doc's actual invariant ids.
+ * cut), and the response contract naming the old doc's actual invariant ids. When `sinceDiff` is set,
+ * the unified diff is included ALONGSIDE (not instead of) the full current-source excerpts, to focus
+ * the agent's attention on what changed without hiding the rest of the module.
  */
 export async function buildVerifyPrompt(
   module: ModuleDescriptor,
   config: ResolvedDocmapConfig,
   oldDoc: { frontmatter: ModuleFrontmatter; body: string },
   instructions?: string,
+  sinceDiff?: SinceDiff,
 ): Promise<string> {
   const allFiles = collectFiles(module.elements);
   const files = allFiles.slice(0, config.maxFilesPerPrompt);
@@ -161,6 +222,16 @@ export async function buildVerifyPrompt(
     lines.push(
       '',
       `Note: this module has ${allFiles.length} source files; only the first ${files.length} are shown above (${omittedCount} omitted due to the per-prompt file limit). If you cannot verify an invariant with the excerpts shown, say so honestly in its justification rather than guessing.`,
+    );
+  }
+
+  if (sinceDiff) {
+    lines.push(
+      '',
+      `The following file(s) changed since ${sinceDiff.ref} — pay particular attention to this diff when judging each invariant:`,
+      '```diff',
+      sinceDiff.diffText,
+      '```',
     );
   }
 
@@ -223,8 +294,9 @@ export async function runVerifyCall(
   runner: AgentRunner,
   instructions?: string,
   logger?: Logger,
+  sinceDiff?: SinceDiff,
 ): Promise<VerifyCallOutcome> {
-  const prompt = await buildVerifyPrompt(module, config, oldDoc, instructions);
+  const prompt = await buildVerifyPrompt(module, config, oldDoc, instructions, sinceDiff);
 
   const call = async (p: string, timeoutMs: number) => {
     const result = await runner.run({
@@ -287,6 +359,42 @@ export interface VerifyOptions {
   moduleIds?: string[];
   /** Only used by the command layer to decide the exit code — runVerify itself just returns verdicts. */
   strict?: boolean;
+  /** Focuses each stale module's prompt on the unified diff against this git ref, alongside (not instead
+   * of) the full current-source excerpts. When git itself is unavailable or projectRoot isn't a git repo,
+   * this is silently downgraded to full-module verification (a warning is logged, nothing throws). */
+  sinceRef?: string;
+}
+
+/** Project-wide `--since` context resolved once per `runVerify` call and handed to every module, so a
+ * missing/broken git only produces one warning instead of one per module. */
+export interface SinceContext {
+  ref: string;
+  /** Project-root-relative (posix) paths touched since `ref`, per `git diff --name-only`. */
+  changedFiles: string[];
+}
+
+/**
+ * Runs `git diff --name-only <ref>` scoped to projectRoot. Returns null (after logging a warning) when
+ * git is unavailable or projectRoot isn't a git repository at all — the caller must fall back to
+ * full-module verification exactly as if `--since` had not been passed, never throw and never skip a
+ * module over this.
+ */
+export async function resolveSinceContext(
+  ref: string,
+  projectRoot: string,
+  logger?: Logger,
+): Promise<SinceContext | null> {
+  try {
+    const result = await execa('git', ['diff', '--name-only', ref], { cwd: projectRoot });
+    const changedFiles = result.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    return { ref, changedFiles };
+  } catch (err) {
+    logger?.warn(`--since ignored: ${(err as Error).message}, falling back to full-module verification`);
+    return null;
+  }
 }
 
 export interface VerifySummary {
@@ -322,6 +430,8 @@ export async function runVerify(options: VerifyOptions): Promise<VerifySummary> 
 
   const instructions = config.skill ? await loadSkillInstructions(projectRoot, config.skill, logger) : undefined;
 
+  const since = options.sinceRef ? await resolveSinceContext(options.sinceRef, projectRoot, logger) : null;
+
   const limit = createConcurrencyLimiter(config.concurrency);
   const reports: VerifyModuleReport[] = [];
 
@@ -336,7 +446,16 @@ export async function runVerify(options: VerifyOptions): Promise<VerifySummary> 
       targetModules.map((module) =>
         limit(async () => {
           try {
-            const report = await verifyModule({ module, projectRoot, config, logger, runner, instructions, progress });
+            const report = await verifyModule({
+              module,
+              projectRoot,
+              config,
+              logger,
+              runner,
+              instructions,
+              progress,
+              since: since ?? undefined,
+            });
             reports.push(report);
           } catch (err) {
             reports.push({
@@ -366,8 +485,9 @@ export async function verifyModule(args: {
   runner: AgentRunner;
   instructions?: string;
   progress?: ProgressTracker;
+  since?: SinceContext;
 }): Promise<VerifyModuleReport> {
-  const { module, projectRoot, config, logger, runner, instructions, progress } = args;
+  const { module, projectRoot, config, logger, runner, instructions, progress, since } = args;
 
   const oldDoc = await readModuleDoc(projectRoot, module);
   if (!oldDoc) {
@@ -377,9 +497,16 @@ export async function verifyModule(args: {
 
   const fingerprint = await computeModuleFingerprint(module);
   if (oldDoc.frontmatter.fingerprint === fingerprint) {
+    // KNOWN LIMITATION (v1): with --since, a module whose fingerprint already matches its doc is still
+    // treated as unchanged even if --since's diff touched it — the doc may already have silently adopted
+    // a regression as its new baseline (generate ran again after the change before verify ever caught
+    // it). Re-verifying against an older baseline is out of scope for v1; see README's
+    // "Business-logic regression guard" section.
     logger.info(`[skip] ${module.id} — unchanged since last generate`);
     return { moduleId: module.id, name: module.name, status: 'unchanged' };
   }
+
+  const sinceDiff = since ? await resolveSinceDiffForModule(module, projectRoot, config, since, logger) : undefined;
 
   const label = module.id;
   logger.info(`[run] ${module.id} — verifying stale doc against current source`);
@@ -387,7 +514,7 @@ export async function verifyModule(args: {
   const startedAt = Date.now();
   let outcome: VerifyCallOutcome;
   try {
-    outcome = await runVerifyCall(module, oldDoc, projectRoot, config, runner, instructions, logger);
+    outcome = await runVerifyCall(module, oldDoc, projectRoot, config, runner, instructions, logger, sinceDiff);
   } finally {
     progress?.batchFinished(label);
   }

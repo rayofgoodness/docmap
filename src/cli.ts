@@ -88,6 +88,7 @@ program
   .option('--dir <path>', 'restrict scanning to a subdirectory of the project')
   .option('--framework <framework>', 'force a framework adapter')
   .option('--skill <path>', 'markdown/SKILL.md file with project-specific documentation instructions')
+  .option('--since <ref>', 'focus each stale module\'s prompt on the diff against this git ref')
   .action(async (opts) => {
     await verifyCommand({
       projectRoot: process.cwd(),
@@ -98,6 +99,7 @@ program
       dir: opts.dir,
       framework: opts.framework,
       skill: opts.skill,
+      since: opts.since,
     });
   });
 
