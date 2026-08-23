@@ -54,7 +54,14 @@ describe('magento2Adapter', () => {
     const modules = await magento2Adapter.discoverModules(makeContext());
     const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;
     const kinds = moduleOne.elements.map((e) => e.kind).sort();
-    expect(kinds).toEqual(['model', 'observer', 'plugin']);
+    expect(kinds).toEqual(['cron', 'model', 'observer', 'plugin']);
+  });
+
+  it('classifies Cron/Job.php as kind cron', async () => {
+    const modules = await magento2Adapter.discoverModules(makeContext());
+    const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;
+    const cronElement = moduleOne.elements.find((e) => e.id === 'Cron/Job.php');
+    expect(cronElement).toMatchObject({ kind: 'cron', name: 'Job' });
   });
 
   it('resolves deterministic di.xml preference and plugin relations across modules', async () => {

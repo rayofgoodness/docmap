@@ -14,6 +14,13 @@ const KIND_BY_TOP_DIR: Record<string, ElementKind> = {
   Api: 'api',
   Helper: 'helper',
   Setup: 'setup',
+  Cron: 'cron',
+  Console: 'console',
+  ViewModel: 'viewmodel',
+  Ui: 'ui',
+  Gateway: 'gateway',
+  CustomerData: 'section',
+  Service: 'service',
 };
 
 export async function collectModuleElements(

@@ -29,6 +29,11 @@ export type ElementKind =
   | 'module'
   | 'file'
   | 'directory'
+  | 'cron'
+  | 'console'
+  | 'viewmodel'
+  | 'ui'
+  | 'section'
   | 'unknown';
 
 export interface SourceFileRef {
