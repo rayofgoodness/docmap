@@ -118,6 +118,22 @@ describe('magento2Adapter', () => {
     });
   });
 
+  it('resolves an area-scoped plugin relation from etc/frontend/di.xml with "(frontend)" in its detail', async () => {
+    const { modules } = await discoverProject(makeContext());
+    const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;
+    const moduleTwoId = modules.find((m) => m.name === 'Vendor_ModuleTwo')!.id;
+
+    const frontendPlugin = moduleOne.relations.find(
+      (r) => r.type === 'plugin-intercepts' && r.detail?.includes('(frontend)'),
+    );
+    expect(frontendPlugin).toMatchObject({
+      toModule: moduleTwoId,
+      toId: `${moduleTwoId}::Controller/Index/Index.php`,
+      confidence: 'deterministic',
+    });
+    expect(frontendPlugin?.detail).toBe('plugin on Vendor\\ModuleTwo\\Controller\\Index\\Index (frontend)');
+  });
+
   it('resolves a deterministic events.xml observer binding', async () => {
     const { modules } = await discoverProject(makeContext());
     const moduleOne = modules.find((m) => m.name === 'Vendor_ModuleOne')!;

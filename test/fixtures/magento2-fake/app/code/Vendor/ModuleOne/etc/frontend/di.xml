@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <type name="Vendor\ModuleTwo\Controller\Index\Index">
+        <plugin name="beforeIndexFrontend" type="Vendor\ModuleOne\Plugin\BeforeIndexPlugin" sortOrder="20"/>
+    </type>
+</config>
