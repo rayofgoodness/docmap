@@ -58,6 +58,19 @@ function buildIntegrationSurfaceSection(modules: ModuleDescriptor[]): string[] {
   ];
 }
 
+/** When buildMermaidGraph caps the diagram to keep it readable, this renders the full edge list
+ * it still returns as a labeled markdown table below the (now partial) mermaid block, so no
+ * relation is silently dropped from index.md even though the picture only shows the top edges. */
+function buildTruncationNote(graph: ReturnType<typeof buildMermaidGraph>): string[] {
+  if (!graph.truncated) return [];
+  return [
+    '',
+    `_Diagram capped to the top ${graph.shownEdges} of ${graph.totalEdges} edges (ranked by module connectivity) to stay readable. Full edge list:_`,
+    '',
+    graph.edgeTable,
+  ];
+}
+
 export function buildIndexBody(modules: ModuleDescriptor[]): string {
   const rows = modules
     .map(
@@ -65,6 +78,8 @@ export function buildIndexBody(modules: ModuleDescriptor[]): string {
         `| ${m.name} | ${m.framework} | ${m.relRootPath} | ${m.elements.length} | ${(m.metadata?.dependents as unknown[] | undefined)?.length ?? 0} |`,
     )
     .join('\n');
+
+  const graph = buildMermaidGraph(modules);
 
   return [
     '## Modules',
@@ -76,8 +91,9 @@ export function buildIndexBody(modules: ModuleDescriptor[]): string {
     '## Relationships',
     '',
     '```mermaid',
-    buildMermaidGraph(modules),
+    graph.diagram,
     '```',
+    ...buildTruncationNote(graph),
     ...buildIntegrationSurfaceSection(modules),
   ].join('\n');
 }
