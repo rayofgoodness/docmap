@@ -6,6 +6,12 @@ export interface LoadConfigOptions {
   overrides?: Partial<DocmapConfig>;
 }
 
+// Aliases for language codes that mean the same thing to users but aren't recognized
+// by src/utils/lang.ts's section-label catalog. Kept minimal and explicit on purpose.
+const LANGUAGE_ALIASES: Record<string, string> = {
+  ua: 'uk',
+};
+
 export async function loadConfig({ projectRoot, overrides }: LoadConfigOptions): Promise<DocmapConfig> {
   const explorer = cosmiconfig('docmap', {
     searchPlaces: [
@@ -20,5 +26,7 @@ export async function loadConfig({ projectRoot, overrides }: LoadConfigOptions):
 
   const result = await explorer.search(projectRoot);
   const raw = { ...(result?.config ?? {}), ...(overrides ?? {}) };
-  return DocmapConfigSchema.parse(raw);
+  const parsed = DocmapConfigSchema.parse(raw);
+  const language = LANGUAGE_ALIASES[parsed.language] ?? parsed.language;
+  return { ...parsed, language };
 }
