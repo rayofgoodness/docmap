@@ -200,6 +200,93 @@ you the exact prompts that would be sent, `mock` runs the full pipeline
 with a deterministic placeholder instead of a real agent call — useful
 in CI or for previewing the module tree.
 
+## Business-logic regression guard
+
+`docmap generate` is safe to re-run because it skips any module whose
+fingerprint hasn't changed — but the moment a module's source *does*
+change, `generate` will happily overwrite its doc with prose describing
+the new code, whatever that new code does. Nothing compares the new
+behavior to the old one first. A refactor that quietly starts cancelling
+orders that used to be untouchable slides straight into the doc as the
+new normal — the previous doc, the project's `eталон` (reference
+baseline) for what the code is *supposed* to do, is gone the moment
+`generate` runs again.
+
+`docmap verify` closes that gap. For each stale module it hands the
+agent both the old doc (the eталон) and the current source, and asks it
+to judge — per documented invariant — whether the code still honors it,
+changed it, or violated it, plus whether any new undocumented behavior
+showed up. Nothing is overwritten; `verify` only reports.
+
+Recommended workflow (run `verify` before `generate` regenerates
+anything):
+
+```
+code changes
+  → docmap status            # what's stale
+  → docmap verify            # did any documented behavior break
+  → human reviews the report:
+      BREAKING and unintended  → fix the code
+      change was intentional   → docmap generate (bakes in the new eталон)
+```
+
+```bash
+docmap verify                              # check every stale module
+docmap verify --module checkout            # just one module
+docmap verify --strict                     # CHANGED also fails the build
+docmap verify --since HEAD~5               # focus the prompt on a git diff
+docmap verify --against .history/checkout/2026-08-01-1200.md   # a specific past baseline
+```
+
+| Flag | Effect |
+|---|---|
+| `--module <id>` | Only verify this module (repeatable) |
+| `--runner <name>` | `claude` \| `codex` \| `gemini` \| `mock` — which agent CLI to shell out to |
+| `--json` | Machine-readable report on stdout, for CI/scripting |
+| `--strict` | `CHANGED` also fails the build (exit 1) — by default only `BREAKING` does |
+| `--since <ref>` | Focuses each stale module's prompt on the `git diff` against `<ref>`, instead of handing over the whole module |
+| `--against <path>` | Verify against a specific `.docmap/.history/` snapshot instead of the current on-disk doc |
+
+Exit code is non-zero when any module comes back `BREAKING` (and, with
+`--strict`, also when any comes back `CHANGED`) — wire it into CI the
+same way as `docmap status`. A human-readable report is always written
+to `.docmap/.reports/verify-<yyyy-MM-dd-HHmm>.md`: a summary table of
+every module's status/verdict, plus per-invariant detail for anything
+`CHANGED` or `BREAKING`.
+
+### Invariants
+
+Business rules are only comparable module-over-module if they're a
+list, not a paragraph of prose. Every generated module doc has an
+`## Invariants` section — a numbered list of observable, checkable
+business rules (e.g. "an order can only be cancelled from
+`pending`/`on-hold`", "a discount never exceeds 50%"). Each item gets an
+id (`I1`, `I2`, ...); `verify`'s report references those same ids when
+it says an invariant was `KEPT`, `CHANGED`, or `VIOLATED`.
+
+### Doc history
+
+Before `generate` overwrites a module's doc, the previous version is
+snapshotted to `.docmap/.history/<module>/<generated_at>.md` — so a
+`generate` run never destroys the eталон `verify` would have compared
+against. Retention is controlled by `config.historyKeep` (default `5`
+snapshots per module, oldest rotated out first; `0` disables history
+entirely). Point `verify --against` at one of these snapshots to check
+current source against an older baseline instead of the latest doc.
+
+### Known limitation: `--since` and an already-stale baseline
+
+`--since <ref>` only narrows the diff shown to the agent for modules
+`verify` decides to check — it does not change *which* modules get
+checked. A module is still skipped as "unchanged" whenever its
+fingerprint matches its on-disk doc, even if the `--since` diff touched
+it. In practice that means: if `generate` already ran again after a
+regressing change (so the doc's fingerprint caught up with the bad
+code before anyone ran `verify`), the doc has silently adopted the
+regression as its new eталон, and `--since` won't surface it — `verify
+--against` a `.docmap/.history/` snapshot from before the regression is
+the way to check that case.
+
 ## Configuration
 
 `docmap.config.json` (or `.docmaprc[.json]`, resolved via cosmiconfig):

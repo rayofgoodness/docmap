@@ -4,9 +4,15 @@ This project uses the `docmap` CLI to keep `.docmap/` module documentation
 in sync with source. All discovery and file-writing logic lives in the CLI:
 
 1. Run `npx docmap scan` to preview modules and relations (no AI calls).
-2. Run `npx docmap generate --runner gemini` to generate/refresh docs,
+2. If code just changed in a module that already has docs, run
+   `npx docmap verify --runner gemini` BEFORE generating, to check
+   whether the change broke documented business behavior. Only move on
+   to `generate` once the verdict is understood (`COMPATIBLE`, or a
+   `CHANGED`/`BREAKING` result confirmed intentional) — generating first
+   would overwrite the doc `verify` needs to compare against.
+3. Run `npx docmap generate --runner gemini` to generate/refresh docs,
    optionally with `--module <id>` for a single module or `--force` to
    bypass the fingerprint cache.
-3. Review the `.docmap/` output and summarize what changed. Do not
+4. Review the `.docmap/` output and summarize what changed. Do not
    hand-edit `.docmap/` files directly — re-run `docmap generate` instead.
 """

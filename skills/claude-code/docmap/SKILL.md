@@ -18,14 +18,26 @@ orchestrates it:
    ```bash
    npx docmap scan
    ```
-2. Generate/update docs, using this agent as the runner:
+2. If you just changed code in a module that already has docs, run
+   `docmap verify` first — BEFORE `docmap generate` — to check whether
+   the change broke any documented business behavior:
+   ```bash
+   npx docmap verify --runner claude
+   ```
+   Only move on to `generate` once you understand the verdict: if it
+   came back `COMPATIBLE`, or you've confirmed with the user that a
+   `CHANGED`/`BREAKING` result was intentional. Don't skip straight to
+   `generate` on a module `verify` flagged — that overwrites the doc
+   (the eталон `verify` compares against) with the new, possibly
+   regressed, behavior.
+3. Generate/update docs, using this agent as the runner:
    ```bash
    npx docmap generate --runner claude
    ```
    Add `--module <id>` to target a single module, `--force` to bypass the
    fingerprint cache, `--dry-run` to preview prompts without calling out.
-3. Review the written files under `.docmap/` and report a summary back to
+4. Review the written files under `.docmap/` and report a summary back to
    the user — do not hand-edit `.docmap/` content yourself; re-run
    `docmap generate` instead so the fingerprint stays in sync with source.
-4. Check `docmap status` any time to see which modules are missing/stale
+5. Check `docmap status` any time to see which modules are missing/stale
    without re-running generation.
