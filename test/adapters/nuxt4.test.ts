@@ -46,4 +46,23 @@ describe('nuxt4Adapter', () => {
     expect(apiCall?.detail).toBe('/api/cart');
     expect(apiCall?.confidence).toBe('heuristic');
   });
+
+  it('prefers the explicit import over a redundant store-call relation for the same store', async () => {
+    // CartBadge.vue both `import`s useCartStore and calls it — the call adds no signal
+    // beyond what the import already recorded, so it must not appear a second time.
+    const { modules } = await discoverProject(makeContext());
+    const components = modules.find((m) => m.id === 'components')!;
+    const storeRelations = components.relations.filter((r) => r.toModule === 'stores');
+    expect(storeRelations).toHaveLength(1);
+    expect(storeRelations[0]).toMatchObject({ type: 'import', detail: '~/stores/cart' });
+  });
+
+  it('still records a store-call relation when the store has no explicit import (auto-import)', async () => {
+    // cart.vue calls useCartStore() without importing it — Nuxt auto-imports the composable,
+    // so the call site is the only signal available and dedup must not suppress it.
+    const { modules } = await discoverProject(makeContext());
+    const pages = modules.find((m) => m.id === 'pages')!;
+    const storeRelation = pages.relations.find((r) => r.toModule === 'stores' && r.type === 'unknown');
+    expect(storeRelation).toMatchObject({ detail: 'useCartStore()', confidence: 'heuristic' });
+  });
 });

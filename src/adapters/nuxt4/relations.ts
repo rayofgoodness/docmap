@@ -8,6 +8,10 @@ const FETCH_CALL_PATTERN = /\b(?:\$fetch|useFetch|useLazyFetch)\(\s*['"]([^'"]+)
 const STORE_CALL_PATTERN = /\buse([A-Za-z0-9]+)Store\(/g;
 const DEFINE_STORE_PATTERN = /defineStore\(\s*['"]([^'"]+)['"]/;
 
+function stripExt(absPath: string): string {
+  return absPath.replace(/\.(js|ts|jsx|tsx|vue|mjs|cjs)$/, '');
+}
+
 export async function resolveNuxt4Relations(
   modules: ModuleDescriptor[],
   appRoot: string,
@@ -43,10 +47,12 @@ export async function resolveNuxt4Relations(
         continue;
       }
       const fromId = `${module.id}::${element.id}`;
+      const importedAbsPaths = new Set<string>();
 
       for (const target of extractImportTargets(source)) {
         const resolved = resolveAliasedImport(target, path.dirname(file.absPath), appRoot, projectRoot);
         if (!resolved) continue;
+        importedAbsPaths.add(stripExt(resolved));
         const owner = findOwningModule(modules, resolved);
         if (!owner || owner.id === module.id) continue;
         relations.push({
@@ -85,16 +91,19 @@ export async function resolveNuxt4Relations(
         while ((storeMatch = STORE_CALL_PATTERN.exec(source)) !== null) {
           const candidate = storeMatch[1]?.toLowerCase();
           const storeElementId = candidate ? storeIdByLowerName.get(candidate) : undefined;
-          if (storeElementId) {
-            relations.push({
-              type: 'unknown',
-              fromId,
-              toId: `stores::${storeElementId}`,
-              toModule: 'stores',
-              detail: `use${storeMatch[1]}Store()`,
-              confidence: 'heuristic',
-            });
-          }
+          if (!storeElementId) continue;
+          // An explicit `import ... from '~/stores/x'` already recorded the same dependency above —
+          // the call-site relation only adds signal for stores pulled in via Nuxt auto-import.
+          const storeFile = storesModule.elements.find((e) => e.id === storeElementId)?.files[0];
+          if (storeFile && importedAbsPaths.has(stripExt(storeFile.absPath))) continue;
+          relations.push({
+            type: 'unknown',
+            fromId,
+            toId: `stores::${storeElementId}`,
+            toModule: 'stores',
+            detail: `use${storeMatch[1]}Store()`,
+            confidence: 'heuristic',
+          });
         }
       }
     }
